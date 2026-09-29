@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environment
+.venv/
+venv/
+
+# macOS
+.DS_Store
+__MACOSX/
+._*
+
+# Archives and reading copies
+*.zip
+*.pdf
+
+# Generated outputs (recreated by running the code)
+outputs/
+data/generated/

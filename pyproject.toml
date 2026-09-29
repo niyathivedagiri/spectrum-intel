@@ -1,0 +1,9 @@
+[project]
+name = "spectrum-intel"
+version = "0.1.0"
+description = "AI-based cognitive radio spectrum intelligence"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
