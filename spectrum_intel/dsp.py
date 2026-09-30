@@ -22,6 +22,12 @@ def signal_power(x: np.ndarray) -> float:
     return float(np.mean(np.abs(x) ** 2))
 
 
+def normalize_power(x: np.ndarray, target: float = 1.0) -> np.ndarray:
+    """Scale x so that its average power equals target (like a receiver's AGC)."""
+    p = signal_power(x)
+    return x if p == 0 else x * np.sqrt(target / p)
+
+
 def fft_spectrum(x: np.ndarray, fs: float, window: str | None = None):
     """Return (frequencies in Hz, magnitude in dB) centred on 0 Hz.
 
