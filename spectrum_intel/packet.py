@@ -44,6 +44,23 @@ class Packet:
         return Packet(seq, total, data), True
 
 
+def parse_unchecked(block: bytes, expected_total: int, max_payload: int) -> "Packet | None":
+    """Read the header fields WITHOUT trusting the CRC (error-tolerant mode for media).
+
+    Only accepted if the fields are self-consistent (plausible sequence number,
+    matching total and length); otherwise the packet is treated as lost.
+    """
+    if len(block) < OVERHEAD_BYTES:
+        return None
+    seq = int.from_bytes(block[0:2], "big")
+    total = int.from_bytes(block[2:4], "big")
+    length = int.from_bytes(block[4:6], "big")
+    if total != expected_total or not 0 <= seq < total or length > max_payload \
+            or HEADER_BYTES + length + CRC_BYTES != len(block):
+        return None
+    return Packet(seq, total, block[HEADER_BYTES:HEADER_BYTES + length])
+
+
 def segment(data: bytes, max_payload: int = 64) -> list[Packet]:
     """Split data into packets of at most max_payload bytes (at least one packet)."""
     chunks = [data[i:i + max_payload] for i in range(0, len(data), max_payload)] or [b""]

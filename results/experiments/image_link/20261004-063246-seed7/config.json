@@ -1,0 +1,29 @@
+{
+  "experiment": "image_link",
+  "seed": 7,
+  "created": "20261004-063246",
+  "config": {
+    "image": "grace_hopper (matplotlib sample)",
+    "size": 64,
+    "raw_bytes": 12296,
+    "png_bytes": 8764,
+    "trials": 2,
+    "snr_db": [
+      -4.0,
+      -2.0,
+      0.0,
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0,
+      12.0,
+      14.0
+    ],
+    "packet_payload_bytes": 64
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}

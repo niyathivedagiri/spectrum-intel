@@ -1,0 +1,27 @@
+{
+  "strict": {
+    "psnr": 18.500801663437908,
+    "ssim": 0.7790054249808311,
+    "pixel_errors": 0.124755859375,
+    "missing": 24,
+    "corrupted": 0,
+    "raw_ber": 0.00022579479768786127,
+    "packets_crc_ok": 169,
+    "image_header_ok": true
+  },
+  "tolerant": {
+    "psnr": 25.059678677940596,
+    "ssim": 0.922819873207062,
+    "pixel_errors": 0.027506510416666668,
+    "missing": 5,
+    "corrupted": 19,
+    "raw_ber": 0.00022579479768786127,
+    "packets_crc_ok": 169,
+    "image_header_ok": true
+  },
+  "png": {
+    "bytes": 8764,
+    "packets_lost": 21,
+    "decoded_exact": false
+  }
+}

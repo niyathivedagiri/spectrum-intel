@@ -50,7 +50,20 @@ the SNR from the received samples alone.
   threshold set from measured noise statistics) → multi-lag frequency estimate refined by the pilot phase slope →
   pilot-based gain/phase tracking → demapping → CRC. Optional coarse frequency search handles LEO-scale Doppler.
 
+**Phase 2 (done): images.** Images are sent as raw 8-bit pixels (a compressed file breaks with one bit error).
+Same channel, two receiver policies: *strict* drops packets that fail the CRC; *error-tolerant* keeps a damaged
+packet if its header is self-consistent (CRC-valid packets always take priority).
+
+| Measured (64×64 RGB, 193 packets, 2 trials per point) | BPSK | QPSK | 16-QAM |
+|---|---|---|---|
+| SNR for image PSNR ≥ 30 dB, error-tolerant | 0 dB | 2 dB | 10 dB |
+| SNR for image PSNR ≥ 30 dB, strict | 2 dB | 4 dB | 12 dB |
+| Mean PSNR gain of error-tolerant mode where packets were lost | +10.5 dB | +9.4 dB | +5.7 dB |
+| SNR where the compressed PNG always decodes | 2 dB | 6 dB | 12 dB |
+
 ```bash
+python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
+python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
 python scripts/demo_text_link.py --text "Hello satellite" --mod qpsk --snr 3   # every stage, printed + figure
 python scripts/exp_link_ber.py                                                 # BER/SER/packet success vs SNR
 python scripts/check_regression.py                                             # original results unchanged?
@@ -84,10 +97,11 @@ spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupan
                   payload, coding, packet, modulation, transmitter, channel, receiver, link,
                   metrics, experiments                       (communication link)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
-                  preview_signals, run_all, demo_text_link, exp_link_ber, check_regression
+                  preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
+                  demo_image_link, exp_image_link
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            105 automated checks
+tests/            114 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -96,7 +110,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 105 checks
+python -m pytest                    # 114 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```

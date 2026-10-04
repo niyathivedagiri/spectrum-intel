@@ -1,0 +1,17 @@
+{
+  "experiment": "image_link_demo",
+  "seed": 1,
+  "created": "20261004-120828",
+  "config": {
+    "image": null,
+    "size": 64,
+    "gray": false,
+    "mod": "qpsk",
+    "snr": 2.0,
+    "seed": 1
+  },
+  "versions": {
+    "python": "3.14.0",
+    "numpy": "2.5.3"
+  }
+}

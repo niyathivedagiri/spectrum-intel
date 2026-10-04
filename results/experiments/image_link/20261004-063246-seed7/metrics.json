@@ -1,0 +1,22 @@
+{
+  "summary": {
+    "bpsk": {
+      "snr_for_psnr30_tolerant": 0.0,
+      "snr_for_psnr30_strict": 2.0,
+      "snr_for_png_always_ok": 2.0,
+      "mean_psnr_gain_tolerant_db_where_lossy": 10.454433960017045
+    },
+    "qpsk": {
+      "snr_for_psnr30_tolerant": 2.0,
+      "snr_for_psnr30_strict": 4.0,
+      "snr_for_png_always_ok": 6.0,
+      "mean_psnr_gain_tolerant_db_where_lossy": 9.444412277162709
+    },
+    "qam16": {
+      "snr_for_psnr30_tolerant": 10.0,
+      "snr_for_psnr30_strict": 12.0,
+      "snr_for_png_always_ok": 12.0,
+      "mean_psnr_gain_tolerant_db_where_lossy": 5.6571816201191645
+    }
+  }
+}

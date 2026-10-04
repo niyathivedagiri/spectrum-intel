@@ -73,3 +73,39 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     c = (p + z ** 2 / (2 * n)) / d
     h = z * np.sqrt(p * (1 - p) / n + z ** 2 / (4 * n ** 2)) / d
     return (max(0.0, c - h), min(1.0, c + h))
+
+
+# --------------------------------------------------------------------------
+# Image quality (received vs original)
+# --------------------------------------------------------------------------
+def mse(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.mean((np.asarray(a, float) - np.asarray(b, float)) ** 2))
+
+
+def psnr(a: np.ndarray, b: np.ndarray, peak: float = 255.0) -> float:
+    """Peak signal-to-noise ratio in dB (inf if identical). ~30 dB+ looks clean, <20 dB visibly damaged."""
+    m = mse(a, b)
+    return float("inf") if m == 0 else float(10 * np.log10(peak ** 2 / m))
+
+
+def _luma(img: np.ndarray) -> np.ndarray:
+    img = np.asarray(img, float)
+    return img if img.ndim == 2 else img[..., :3] @ np.array([0.299, 0.587, 0.114])
+
+
+def ssim(a: np.ndarray, b: np.ndarray, peak: float = 255.0, sigma: float = 1.5) -> float:
+    """Structural similarity (Wang et al. 2004) on luminance, Gaussian window. 1 = identical structure."""
+    from scipy.ndimage import gaussian_filter
+    x, y = _luma(a), _luma(b)
+    c1, c2 = (0.01 * peak) ** 2, (0.03 * peak) ** 2
+    mx, my = gaussian_filter(x, sigma), gaussian_filter(y, sigma)
+    sxx = gaussian_filter(x * x, sigma) - mx ** 2
+    syy = gaussian_filter(y * y, sigma) - my ** 2
+    sxy = gaussian_filter(x * y, sigma) - mx * my
+    s = ((2 * mx * my + c1) * (2 * sxy + c2)) / ((mx ** 2 + my ** 2 + c1) * (sxx + syy + c2))
+    return float(np.mean(s))
+
+
+def pixel_error_rate(a: np.ndarray, b: np.ndarray) -> float:
+    """Fraction of pixel values that differ at all."""
+    return float(np.mean(np.asarray(a) != np.asarray(b)))
