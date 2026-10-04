@@ -1,0 +1,16 @@
+{
+  "experiment": "text_link_demo",
+  "seed": 1,
+  "created": "20261004-113502",
+  "config": {
+    "text": "Hello satellite",
+    "mod": "qpsk",
+    "snr": 3.0,
+    "cfo": 0.0,
+    "seed": 1
+  },
+  "versions": {
+    "python": "3.14.0",
+    "numpy": "2.5.3"
+  }
+}

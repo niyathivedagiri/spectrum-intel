@@ -1,0 +1,12 @@
+{
+  "text": "Hello satellite",
+  "recovered": "Hello satellite",
+  "exact": true,
+  "bit_errors": 0,
+  "bits": 184,
+  "symbol_errors": 0,
+  "symbols": 92,
+  "crc_ok": true,
+  "snr_est_db": 4.021138949550391,
+  "cfo_est": 2.1221431651039645e-05
+}

@@ -1,0 +1,16 @@
+{
+  "experiment": "text_link_demo",
+  "seed": 3,
+  "created": "20261004-060000",
+  "config": {
+    "text": "Hello satellite",
+    "mod": "qam16",
+    "snr": 12.0,
+    "cfo": 0.0,
+    "seed": 3
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "text": "HELLO",
+  "recovered": "HELLO",
+  "exact": true,
+  "bit_errors": 0,
+  "bits": 104,
+  "symbol_errors": 0,
+  "symbols": 52,
+  "crc_ok": true,
+  "snr_est_db": 3.2816854286287835,
+  "cfo_est": -3.997158268937491e-05
+}

@@ -1,0 +1,37 @@
+{
+  "experiment": "link_ber",
+  "seed": 2026,
+  "created": "20261004-055911",
+  "config": {
+    "frames_per_point": 100,
+    "payload_bytes": 64,
+    "snr_per_sample_db": [
+      -8.0,
+      -7.0,
+      -6.0,
+      -5.0,
+      -4.0,
+      -3.0,
+      -2.0,
+      -1.0,
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0,
+      11.0,
+      12.0
+    ],
+    "channel": "AWGN, random phase+delay"
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}
