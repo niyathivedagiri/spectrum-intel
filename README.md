@@ -79,7 +79,38 @@ spectral efficiency, overhead and airtime latency (default 1 MS/s → 125 kBd, 1
 - The original CNN, never trained on these frames, recognises the link's own modulation from a 1024-sample
   payload window: 100% / 99.2% / 99.7% (BPSK / QPSK / 16-QAM) at SNR ≥ 0 dB.
 
+**Phase 4 (done): live dashboard.** A local web page (Python standard library only, no internet needed)
+styled as a dark RF test-bench shows the link working packet by packet: the TX → channel → RX pipeline with live
+values at each stage, the received constellation (with decision boundaries and EVM), spectrum (with occupied band
+and noise floor), I/Q waveform (with the detected frame start), link telemetry, a packet-by-packet event log,
+transmitted vs recovered message, and the packet history. Modulation, SNR, frequency offset and error-tolerant
+mode can be changed while it runs; "Save run" writes a new results folder.
+
+<img src="docs/dashboard.png" width="760">
+
+- The real-time engine runs the same per-packet code as the experiments; for the same seed it gives
+  bit-identical packets and received bytes (checked by tests and by the experiment).
+- Profiling showed ~60% of the time per packet went into recomputing the same pulse-shaping filter.
+  Computing it once changed no output (regression check: 0 difference) and made each packet 2.4× faster
+  (2.3–3.0× across runs on this machine).
+
+| Measured (median of 40 packets, 1 MS/s, 2-core cloud CPU; rerun on yours) | BPSK | QPSK | 16-QAM |
+|---|---|---|---|
+| CPU time ÷ airtime, 64-byte packets, before → after | 1.7 → 0.99 | 2.5 → 1.03 | 3.7 → 1.45 |
+| CPU time ÷ airtime after, 16 / 64 / 256 / 1024 B | 1.23 / 0.99 / 0.75 / 0.92 | 1.48 / 1.03 / 0.78 / 0.87 | 1.96 / 1.45 / 1.20 / 1.05 |
+
+Below 1 the link is processed faster than it is transmitted. The remaining time is mostly frame sync
+(seven full-length correlations per burst).
+
+Found with the dashboard: in error-tolerant mode a bit error in a packet's *sequence number* files the data
+under the wrong slot (seed 1, QPSK, 1.5 dB: packet 1 is read as packet 9, so slot 1 stays empty). The MAC header
+is only protected by the packet CRC, which tolerant mode ignores; protecting the header separately is a
+candidate for the error-correction phase. The dashboard is a single-user local tool, not a multi-user web app.
+
 ```bash
+python scripts/dashboard.py                                                    # opens http://127.0.0.1:8765
+python scripts/dashboard.py --source image --snr 3                            # the sample photo
+python scripts/exp_realtime.py                                                 # speed before/after (~20 s)
 python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
@@ -114,13 +145,15 @@ The original validated numbers are frozen in `results/validated/metrics_v1.json`
 ```
 spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupancy, leo, plots
                   payload, coding, packet, modulation, transmitter, channel, receiver, link,
-                  metrics, experiments                       (communication link)
+                  metrics, experiments, engine, dashboard (+ web/dashboard.html)   (communication link)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
-                  demo_image_link, exp_image_link, exp_link_metrics
+                  demo_image_link, exp_image_link, exp_link_metrics,
+                  dashboard, exp_realtime
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
+docs/             dashboard screenshot
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            122 automated checks
+tests/            134 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -129,7 +162,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 122 checks
+python -m pytest                    # 134 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
