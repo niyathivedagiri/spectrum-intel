@@ -11,10 +11,11 @@ import numpy as np
 
 from spectrum_intel import channel as ch
 from spectrum_intel.metrics import bit_errors
+from spectrum_intel.modulation import nearest_index, symbol_indices
 from spectrum_intel.packet import Packet, parse_unchecked, reassemble, segment
 from spectrum_intel.payload import bytes_to_bits
 from spectrum_intel.receiver import receive
-from spectrum_intel.transmitter import build_frame
+from spectrum_intel.transmitter import HEADER_BITS, build_frame
 
 
 @dataclass
@@ -29,7 +30,10 @@ class PacketRecord:
     bit_errors: int | None      # raw bit errors in the packet (None if the frame was lost)
     snr_est_db: float
     cfo_est: float
-    n_samples: int
+    n_samples: int              # airtime of the frame in samples
+    data_bytes: int = 0         # user data bytes carried by this packet
+    symbol_errors: int | None = None
+    n_symbols: int = 0          # payload symbols in the frame
 
 
 @dataclass
@@ -73,9 +77,13 @@ def send(data: bytes, mod: str, snr_db: float, rng: np.random.Generator, *,
         frame = build_frame(block, mod)
         rx, _ = ch.awgn_link(frame.iq, snr_db, rng, cfo=cfo)
         res = receive(rx, cfo_search=cfo_search)
-        crc_ok, errs, used = False, None, False
+        crc_ok, errs, used, sym_err = False, None, False, None
+        tx_bits = bytes_to_bits(block)
+        n_sym = frame.n_payload_symbols
         if res.header_ok:
-            errs = bit_errors(bytes_to_bits(block), res.payload_bits)
+            errs = bit_errors(tx_bits, res.payload_bits)
+            rx_pay = res.data_symbols[HEADER_BITS:]
+            sym_err = int(np.sum(nearest_index(rx_pay, mod) != symbol_indices(tx_bits, mod)[:len(rx_pay)]))
             parsed, crc_ok = Packet.from_bytes(res.payload)
             if crc_ok:
                 good.append(parsed)
@@ -85,7 +93,8 @@ def send(data: bytes, mod: str, snr_db: float, rng: np.random.Generator, *,
                     rough_pkts.append(rough)
                     used = True
         records.append(PacketRecord(pkt.seq, mod, len(block) * 8, res.detected, res.header_ok, crc_ok,
-                                    used, errs, res.snr_est_db, res.cfo_est, len(frame.iq)))
+                                    used, errs, res.snr_est_db, res.cfo_est, len(frame.iq),
+                                    data_bytes=len(pkt.data), symbol_errors=sym_err, n_symbols=n_sym))
         if keep_frames:
             frames.append((frame, rx, res))
     # CRC-valid packets always win; a damaged packet only fills a gap nobody else filled
