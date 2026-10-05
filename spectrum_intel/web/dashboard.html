@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spectrum Intelligence · Testbed</title>
+<style>
+  :root {
+    --bg: #0a0c0f; --panel: #11151a; --panel2: #161b21; --well: #0c0f13; --line: #222932; --line2: #2c3540;
+    --grid: #1a2028; --ink: #e6e9ee; --ink2: #b9c0ca; --muted: #737d8a; --dim: #4a535e;
+    --sig: #3fc6e0; --sig-dim: rgba(63,198,224,.12); --q: #a98bf0;
+    --ok: #3ccf8e; --warn: #f0b23c; --err: #ef5a5a; --off: #3a424d;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 var(--sans); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .hidden { display: none !important; }
+
+  /* ---------------------------------------------------------------- top bar + pipeline */
+  .top { display: flex; align-items: center; gap: 28px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: #0d1014; }
+  .brand b { display: block; font-size: 14px; font-weight: 650; letter-spacing: .2px; }
+  .brand span { font-size: 11px; color: var(--muted); letter-spacing: .3px; }
+  .stat { display: flex; flex-direction: column; gap: 1px; }
+  .stat .k { font-size: 9.5px; color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; }
+  .stat .v { font: 600 12px var(--mono); letter-spacing: .5px; }
+  .led { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--off); margin-right: 6px; vertical-align: 1px; }
+  .led.on { background: var(--ok); box-shadow: 0 0 6px rgba(60,207,142,.7); }
+  .led.warn { background: var(--warn); box-shadow: 0 0 6px rgba(240,178,60,.6); }
+  .led.err { background: var(--err); box-shadow: 0 0 6px rgba(239,90,90,.6); }
+  .led.sig { background: var(--sig); box-shadow: 0 0 6px rgba(63,198,224,.6); }
+  .top .grow { flex: 1; }
+  .prog { width: 220px; }
+  .prog .bar { height: 3px; background: var(--grid); margin-top: 5px; }
+  .prog .bar div { height: 100%; width: 0; background: var(--sig); transition: width .2s linear; }
+
+  .pipe { display: flex; align-items: stretch; padding: 7px 18px; border-bottom: 1px solid var(--line); background: var(--bg); overflow-x: auto; }
+  .stage { flex: none; padding: 2px 10px; border-left: 2px solid var(--line2); white-space: nowrap; }
+  .stage .k { font-size: 9px; letter-spacing: 1.1px; color: var(--muted); text-transform: uppercase; }
+  .stage .v { font: 11px var(--mono); color: var(--ink2); }
+  .stage.tx { border-left-color: var(--sig); } .stage.ch { border-left-color: var(--q); } .stage.rx { border-left-color: var(--ink2); }
+  .stage .v.ok { color: var(--ok); } .stage .v.warn { color: var(--warn); } .stage .v.err { color: var(--err); }
+  .arrow { flex: none; color: var(--dim); align-self: center; padding: 0 4px; font-size: 11px; }
+
+  /* ---------------------------------------------------------------- layout */
+  .bench { display: grid; grid-template-columns: 252px minmax(0, 1fr) 236px; gap: 10px; padding: 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; min-width: 0; }
+  .ph { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  .ph h3 { margin: 0; font-size: 10px; font-weight: 650; letter-spacing: 1.4px; color: var(--ink2); text-transform: uppercase; }
+  .ph .tag { font: 600 11px var(--mono); color: var(--muted); }
+  .center { display: grid; gap: 10px; min-width: 0; align-content: start; }
+  .scope { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 10px; }
+  .stack { display: grid; grid-template-rows: 1fr 1fr; gap: 10px; }
+  canvas { display: block; width: 100%; }
+  .readout { display: flex; gap: 14px; flex-wrap: wrap; padding: 6px 10px 8px; border-top: 1px solid var(--line); font: 11px var(--mono); color: var(--muted); }
+  .readout b { color: var(--ink); font-weight: 600; }
+  .modtag { font: 700 13px var(--mono) !important; color: var(--sig) !important; letter-spacing: 1px; }
+
+  /* ---------------------------------------------------------------- control rack */
+  .rack .sec { padding: 10px; border-bottom: 1px solid var(--line); }
+  .rack .sec:last-child { border-bottom: 0; }
+  .lbl { font-size: 9.5px; letter-spacing: 1.2px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: baseline; }
+  .lbl .mono { font-size: 11px; color: var(--ink); letter-spacing: 0; text-transform: none; }
+  .keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .key { background: var(--panel2); border: 1px solid var(--line2); border-bottom-color: #0b0e12; color: var(--ink); border-radius: 2px; padding: 7px 0 6px;
+         font: 600 10px var(--sans); letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
+  .key:hover { border-color: #3a4552; }
+  .key:active { transform: translateY(1px); }
+  .key .led { width: 5px; height: 5px; margin-right: 5px; }
+  .key.primary { color: var(--sig); }
+  .sel { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line2); border-radius: 2px; background: var(--well); }
+  .sel button { border: 0; background: transparent; color: var(--muted); padding: 6px 0 5px; font: 600 10.5px var(--mono); letter-spacing: .6px; cursor: pointer; }
+  .sel button + button { border-left: 1px solid var(--line2); }
+  .sel button::before { content: ""; display: block; width: 14px; height: 2px; margin: 0 auto 5px; background: var(--off); }
+  .sel button.on { color: var(--ink); background: var(--panel2); }
+  .sel button.on::before { background: var(--sig); box-shadow: 0 0 5px var(--sig); }
+  .fader { position: relative; padding: 2px 0 16px; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 0; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; background: var(--well); border: 1px solid var(--line2); border-radius: 1px; }
+  input[type=range]::-moz-range-track { height: 4px; background: var(--well); border: 1px solid var(--line2); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 18px; margin-top: -8px; border-radius: 2px;
+     background: linear-gradient(#cfd5dc, #8d96a1); border: 1px solid #0b0e12; box-shadow: 0 1px 2px rgba(0,0,0,.6); }
+  input[type=range]::-moz-range-thumb { width: 11px; height: 17px; border-radius: 2px; background: #b9c0ca; border: 1px solid #0b0e12; }
+  .ticks { position: absolute; left: 6px; right: 6px; bottom: -2px; height: 13px; padding-top: 4px; display: flex; justify-content: space-between; font: 8.5px var(--mono); color: var(--dim); }
+  .ticks span { position: relative; width: 0; display: flex; justify-content: center; }
+  .ticks span::before { content: ""; position: absolute; top: -4px; width: 1px; height: 3px; background: var(--dim); }
+  textarea, input[type=number] { width: 100%; background: var(--well); color: var(--ink); border: 1px solid var(--line2); border-radius: 2px; padding: 6px 7px; font: 11.5px/1.45 var(--mono); }
+  textarea { min-height: 70px; resize: vertical; }
+  .txbtn { margin-top: 6px; width: 100%; }
+  .sw { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 11.5px; color: var(--ink2); margin-top: 8px; user-select: none; }
+  .sw input { display: none; }
+  .sw i { width: 26px; height: 13px; border-radius: 2px; background: var(--well); border: 1px solid var(--line2); position: relative; flex: none; }
+  .sw i::after { content: ""; position: absolute; top: 1px; left: 1px; width: 10px; height: 9px; background: var(--off); border-radius: 1px; transition: left .12s; }
+  .sw input:checked + i::after { left: 13px; background: var(--sig); box-shadow: 0 0 4px var(--sig); }
+  .file { font: 10.5px var(--mono); color: var(--muted); width: 100%; margin-top: 6px; }
+  .file::file-selector-button { background: var(--panel2); color: var(--ink2); border: 1px solid var(--line2); border-radius: 2px; padding: 4px 8px; font: 600 10px var(--sans); letter-spacing: .8px; text-transform: uppercase; margin-right: 8px; cursor: pointer; }
+  .hint { font-size: 10.5px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+  .chip { display: inline-block; font: 600 10.5px var(--mono); color: var(--q); border: 1px solid var(--line2); padding: 1px 6px; border-radius: 2px; letter-spacing: 0; }
+  #msg { font: 10.5px var(--mono); color: var(--muted); margin-top: 8px; word-break: break-all; min-height: 14px; }
+  #msg.err { color: var(--err); }
+
+  /* ---------------------------------------------------------------- telemetry */
+  .tele .row { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 10px; border-bottom: 1px solid var(--grid); }
+  .tele .row:last-child { border-bottom: 0; }
+  .tele .k { font-size: 9.5px; letter-spacing: 1.1px; color: var(--muted); text-transform: uppercase; }
+  .tele .v { font: 600 15px var(--mono); text-align: right; }
+  .tele .v small { display: block; font: 10px var(--mono); color: var(--muted); font-weight: 400; margin-top: 1px; }
+  .tele .big .v { font-size: 13px; letter-spacing: .8px; }
+  .v.ok { color: var(--ok); } .v.warn { color: var(--warn); } .v.err { color: var(--err); } .v.sig { color: var(--sig); }
+  .right { display: grid; gap: 10px; align-content: start; }
+  #events { height: 400px; overflow-y: auto; font: 10.5px/1.5 var(--mono); padding: 6px 10px; }
+  #events div { display: grid; grid-template-columns: 58px 1fr; gap: 6px; color: var(--ink2); }
+  #events time { color: var(--dim); }
+  #events .ok { color: var(--ok); } #events .warn { color: var(--warn); } #events .err { color: var(--err); } #events .cfg { color: var(--sig); }
+
+  /* ---------------------------------------------------------------- payload */
+  .payload { display: grid; grid-template-columns: 1fr 1fr; }
+  .payload > div { padding: 8px 10px; min-width: 0; }
+  .payload > div + div { border-left: 1px solid var(--line); }
+  .sub { font-size: 9.5px; letter-spacing: 1.2px; color: var(--muted); text-transform: uppercase; margin-bottom: 5px; display: flex; justify-content: space-between; gap: 8px; }
+  .txt { font: 11.5px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 136px; overflow-y: auto; color: var(--ink2); }
+  #rxText span.ok { color: var(--ink); }
+  #rxText span.damaged { color: var(--warn); background: rgba(240,178,60,.08); }
+  #rxText span.lost { color: var(--err); }
+  #rxText span.pending { color: var(--dim); }
+  .imgs { display: grid; grid-template-columns: auto auto 1fr; gap: 14px; align-items: start; padding: 8px 10px; }
+  .imgs img { width: 152px; height: 152px; image-rendering: pixelated; display: block; border: 1px solid var(--line2); background: var(--well); }
+  .imgstats { font: 11px/1.9 var(--mono); color: var(--muted); padding-top: 18px; }
+  .imgstats b { color: var(--ink); font-weight: 600; display: inline-block; min-width: 70px; text-align: right; margin-right: 6px; }
+
+  /* ---------------------------------------------------------------- history */
+  #map { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 10px 4px; }
+  #map div { width: 7px; height: 7px; background: var(--off); }
+  #map .ok { background: var(--ok); } #map .damaged { background: var(--warn); } #map .lost { background: var(--err); }
+  .key-legend { display: flex; gap: 14px; flex-wrap: wrap; font: 10px var(--mono); color: var(--muted); padding: 0 10px 6px; }
+  .key-legend i { display: inline-block; width: 7px; height: 7px; margin-right: 5px; }
+  .tablewrap { max-height: 214px; overflow-y: auto; border-top: 1px solid var(--line); }
+  table { width: 100%; border-collapse: collapse; font: 11px var(--mono); font-variant-numeric: tabular-nums; }
+  th { position: sticky; top: 0; background: var(--panel); font: 600 9.5px var(--sans); letter-spacing: 1.1px; color: var(--muted); text-transform: uppercase; text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  td { text-align: right; padding: 4px 10px; border-bottom: 1px solid var(--grid); color: var(--ink2); }
+  th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+  td .led { width: 6px; height: 6px; box-shadow: none !important; }
+  td.ok { color: var(--ok); } td.warn { color: var(--warn); } td.err { color: var(--err); }
+
+  @media (max-width: 1360px) { .bench { grid-template-columns: 222px minmax(0, 1fr) 212px; } .tele .v { font-size: 14px; } .top { gap: 20px; } }
+  @media (max-width: 1100px) { .bench { grid-template-columns: 222px minmax(0, 1fr); } .right { grid-column: 2; grid-template-columns: 1fr 1fr; } .scope { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) { .bench { grid-template-columns: 1fr; } .right { grid-column: 1; } .scope, .payload, .right { grid-template-columns: 1fr; } .top { flex-wrap: wrap; gap: 14px; } }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand"><b>Spectrum Intelligence</b><span>Adaptive Digital Communication Testbed</span></div>
+  <div class="stat"><span class="k">Link</span><span class="v" id="tLink"><span class="led"></span>STANDBY</span></div>
+  <div class="stat"><span class="k">Simulation</span><span class="v" id="tSim">READY</span></div>
+  <div class="stat"><span class="k">Seed</span><span class="v" id="tSeed">–</span></div>
+  <div class="stat"><span class="k">Sample rate</span><span class="v" id="tFs">–</span></div>
+  <div class="grow"></div>
+  <div class="stat prog"><span class="k">Message</span><span class="v" id="tCount">0 / 0 PKT</span><div class="bar"><div id="bar"></div></div></div>
+</div>
+
+<div class="pipe">
+  <div class="stage tx"><div class="k">Payload</div><div class="v" id="pPayload">–</div></div><span class="arrow">→</span>
+  <div class="stage tx"><div class="k">Packetize</div><div class="v" id="pPack">–</div></div><span class="arrow">→</span>
+  <div class="stage tx"><div class="k">Modulate</div><div class="v" id="pMod">–</div></div><span class="arrow">→</span>
+  <div class="stage tx"><div class="k">I/Q</div><div class="v">RRC β 0.35 · 8 sps</div></div><span class="arrow">→</span>
+  <div class="stage ch"><div class="k">Channel</div><div class="v" id="pChan">–</div></div><span class="arrow">→</span>
+  <div class="stage rx"><div class="k">Sync</div><div class="v" id="pSync">–</div></div><span class="arrow">→</span>
+  <div class="stage rx"><div class="k">Equalize</div><div class="v" id="pEq">–</div></div><span class="arrow">→</span>
+  <div class="stage rx"><div class="k">Demodulate</div><div class="v" id="pDem">–</div></div><span class="arrow">→</span>
+  <div class="stage rx"><div class="k">CRC</div><div class="v" id="pCrc">–</div></div><span class="arrow">→</span>
+  <div class="stage rx"><div class="k">Recovered</div><div class="v" id="pRec">–</div></div>
+</div>
+
+<div class="bench">
+  <!-- ============================================================ CONTROL RACK -->
+  <aside class="panel rack">
+    <div class="ph"><h3>Control rack</h3><span class="tag" id="runTag">STOP</span></div>
+    <div class="sec">
+      <div class="keys">
+        <button class="key primary" id="go"><span class="led" id="goLed"></span><span id="goTxt">Run</span></button>
+        <button class="key" id="step">Step</button>
+        <button class="key" id="reset">Reset</button>
+        <button class="key" id="save">Save</button>
+      </div>
+      <div class="lbl" style="margin-top:12px">Pace <span class="mono" id="rateV"></span></div>
+      <div class="fader"><input type="range" id="rate" min="1" max="60" step="1"><div class="ticks"><span>1</span><span>15</span><span>30</span><span>45</span><span>60</span></div></div>
+      <div id="msg"></div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">Payload</div>
+      <div class="sel" id="source"><button data-v="text">TEXT</button><button data-v="image">IMAGE</button></div>
+      <div id="textBox" style="margin-top:8px">
+        <textarea id="text" spellcheck="false"></textarea>
+        <button class="key primary txbtn" id="applyText">Transmit</button>
+      </div>
+      <div id="imageBox" class="hidden" style="margin-top:8px">
+        <div class="lbl">Resolution <span class="mono" id="sizeV"></span></div>
+        <div class="sel" id="size"><button data-v="32">32</button><button data-v="48">48</button><button data-v="64">64</button><button data-v="96">96</button></div>
+        <label class="sw"><input type="checkbox" id="gray"><i></i>Grayscale</label>
+        <input type="file" id="file" class="file" accept="image/*">
+      </div>
+      <div class="lbl" style="margin-top:10px">Seed</div>
+      <input type="number" id="seed">
+      <div class="hint">Payload, resolution or seed restart the run.</div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">Modulation</div>
+      <div class="sel" id="mod"><button data-v="bpsk">BPSK</button><button data-v="qpsk">QPSK</button><button data-v="qam16">16-QAM</button></div>
+      <div class="lbl" style="margin-top:12px">SNR per sample <span class="mono" id="snrV"></span></div>
+      <div class="fader"><input type="range" id="snr" min="-8" max="20" step="0.5"><div class="ticks"><span>-8</span><span>-1</span><span>6</span><span>13</span><span>20</span></div></div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">Channel <span class="chip">AWGN</span></div>
+      <div class="lbl" style="margin-top:8px">Frequency offset <span class="mono" id="cfoV"></span></div>
+      <div class="fader"><input type="range" id="cfo" min="0" max="4" step="0.25"><div class="ticks"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span></div></div>
+      <label class="sw"><input type="checkbox" id="tolerant"><i></i>Keep damaged packets</label>
+      <div class="hint">Modulation, SNR, offset and damaged-packet policy apply from the next packet.</div>
+    </div>
+  </aside>
+
+  <!-- ============================================================ CENTRE: SIGNALS -->
+  <section class="center">
+    <div class="scope">
+      <div class="panel">
+        <div class="ph"><h3>Received constellation</h3><span class="tag modtag" id="cMod">–</span></div>
+        <canvas id="cConst" height="404"></canvas>
+        <div class="readout"><span>SNR <b id="rSnr">–</b></span><span>EVM <b id="rEvm">–</b></span><span>BIT ERR <b id="rBe">–</b></span><span>PKT <b id="rPkt">–</b></span></div>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <div class="ph"><h3>Received spectrum</h3><span class="tag" id="sTag">–</span></div>
+          <canvas id="cPsd" height="168"></canvas>
+          <div class="readout"><span>CENTRE <b>0 Hz</b></span><span>BW <b id="rBw">–</b></span><span>NOISE FLOOR <b id="rNf">–</b></span></div>
+        </div>
+        <div class="panel">
+          <div class="ph"><h3>I/Q waveform</h3><span class="tag" id="wTag">–</span></div>
+          <canvas id="cWave" height="168"></canvas>
+          <div class="readout"><span><b style="color:var(--sig)">━ I</b></span><span><b style="color:var(--q)">━ Q</b></span><span>SYNC <b id="rSync">–</b></span><span>Δf EST <b id="rCfo">–</b></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><h3 id="payTitle">Message transfer</h3><span class="tag" id="payTag">–</span></div>
+      <div class="payload" id="textPane">
+        <div><div class="sub"><span>Transmitted</span><span class="mono" id="txBytes"></span></div><div class="txt" id="txText"></div></div>
+        <div><div class="sub"><span>Recovered</span><span class="mono" id="rxState"></span></div><div class="txt" id="rxText"></div></div>
+      </div>
+      <div class="imgs hidden" id="imgPane">
+        <div><div class="sub"><span>Original</span></div><img id="imgOrig" alt="original image"></div>
+        <div><div class="sub"><span>Received</span></div><img id="imgRx" alt="received image"></div>
+        <div class="imgstats">
+          <div><b id="iPsnr">–</b>PSNR</div><div><b id="iSsim">–</b>SSIM</div>
+          <div><b id="iOk" style="color:var(--ok)">–</b>packets received</div>
+          <div><b id="iDam" style="color:var(--warn)">–</b>packets damaged, kept</div>
+          <div><b id="iLost" style="color:var(--err)">–</b>packets lost</div>
+          <div><b id="iHdr">–</b>image header</div>
+        </div>
+      </div>
+    </div>
+    <section class="panel">
+      <div class="ph"><h3>Communication history</h3><span class="tag" id="hTag">–</span></div>
+      <div id="map"></div>
+      <div class="key-legend"><span><i style="background:var(--ok)"></i>CRC passed</span><span><i style="background:var(--warn)"></i>damaged, retained</span><span><i style="background:var(--err)"></i>lost / rejected</span><span><i style="background:var(--off)"></i>not transmitted</span></div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Packet</th><th>Status</th><th>Modulation</th><th>SNR set</th><th>SNR est</th><th>Bit errors</th><th>CRC</th><th>Airtime</th><th>CPU</th></tr></thead>
+        <tbody id="log"></tbody>
+      </table></div>
+    </section>
+  </section>
+
+  <!-- ============================================================ RIGHT: TELEMETRY -->
+  <section class="right">
+    <div class="panel tele">
+      <div class="ph"><h3>Link telemetry</h3><span class="tag">RUN / 20</span></div>
+      <div class="row big"><span class="k">RX status</span><span class="v" id="vRx"><span class="led"></span>IDLE</span></div>
+      <div class="row"><span class="k">Packet success</span><span class="v" id="vPs">–</span></div>
+      <div class="row"><span class="k">Packet loss</span><span class="v" id="vPl">–</span></div>
+      <div class="row"><span class="k">BER (raw)</span><span class="v" id="vBer">–</span></div>
+      <div class="row"><span class="k">SNR est</span><span class="v" id="vSnr">–</span></div>
+      <div class="row"><span class="k">Goodput</span><span class="v" id="vGp">–</span></div>
+      <div class="row"><span class="k">Throughput</span><span class="v" id="vTp">–</span></div>
+      <div class="row"><span class="k">Latency / frame</span><span class="v" id="vLat">–</span></div>
+      <div class="row"><span class="k">Overhead</span><span class="v" id="vOh">–</span></div>
+      <div class="row"><span class="k">Modulation</span><span class="v sig" id="vMod">–</span></div>
+      <div class="row"><span class="k">Channel</span><span class="v" id="vCh">AWGN</span></div>
+      <div class="row"><span class="k">CPU ÷ airtime</span><span class="v" id="vRt">–</span></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><h3>Event log</h3><span class="tag">LOCAL TIME</span></div>
+      <div id="events"></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const MODNAME = {bpsk: "BPSK", qpsk: "QPSK", qam16: "16-QAM"};
+const SYNC_THRESHOLD = 0.58, PREAMBLE_SAMPLES = 63 * 8;          // receiver constants (receiver.py, transmitter.py)
+let S = null, lastCfg = null, busy = false, lastSent = -1, lastImg = "";
+let persist = [], prevPsd = null, curPsd = null, events = [], loggedUpTo = -1, prevRunning = null, prevDone = null;
+
+async function api(path, body, raw) {
+  const r = await fetch(path, body === undefined ? {} : {method: "POST", body: raw ? body : JSON.stringify(body),
+                       headers: raw ? {} : {"Content-Type": "application/json"}});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function say(t, err) { $("msg").textContent = t || ""; $("msg").className = err ? "err" : ""; }
+async function control(action, config) {
+  try { const j = await api("/api/control", {action, config});
+        if (j.saved) { say("saved → " + j.saved); event("Run saved to results folder", "cfg"); } else if (action !== "update") say("");
+        await poll(); }
+  catch (e) { say(e.message, true); }
+}
+
+// ------------------------------------------------------------------ controls (same API calls as before)
+function seg(id, onPick) { $(id).addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) onPick(b.dataset.v); }); }
+function setSeg(id, v) { for (const b of $(id).children) b.classList.toggle("on", b.dataset.v === String(v)); }
+seg("source", v => control("update", {source: v}));
+seg("mod", v => { setSeg("mod", v); control("update", {mod: v}); });
+seg("size", v => control("update", {image_size: +v}));
+$("gray").onchange = e => control("update", {gray: e.target.checked});
+$("tolerant").onchange = e => control("update", {tolerant: e.target.checked});
+$("seed").onchange = e => control("update", {seed: +e.target.value});
+$("applyText").onclick = () => control("update", {text: $("text").value, source: "text"}).then(() => control("reset"));
+const labels = {snr: v => (+v).toFixed(1) + " dB", cfo: v => (+v).toFixed(2) + " kHz", rate: v => v + " pkt/s"};
+const editing = new Set();                                         // controls the operator is touching right now
+for (const id of ["snr", "cfo", "rate"]) {
+  $(id).addEventListener("input", e => { editing.add(id); $(id + "V").textContent = labels[id](e.target.value); });
+  $(id).addEventListener("change", async e => {
+    const v = +e.target.value;
+    await control("update", id === "snr" ? {snr_db: v} : id === "cfo" ? {cfo: v * 1000 / S.config.sample_rate_hz} : {rate_pps: v});
+    editing.delete(id);
+  });
+}
+$("go").onclick = () => control(S && S.running ? "pause" : "start");
+$("step").onclick = () => control("step");
+$("reset").onclick = () => control("reset");
+$("save").onclick = () => control("save");
+$("file").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { await api("/api/image", await f.arrayBuffer(), true); say("image → " + f.name); event("Custom image loaded: " + f.name, "cfg"); poll(); }
+  catch (err) { say(err.message, true); }
+};
+
+function fillControls(c, prev) {
+  setSeg("source", c.source); setSeg("mod", c.mod); setSeg("size", c.image_size);
+  $("textBox").classList.toggle("hidden", c.source !== "text");
+  $("imageBox").classList.toggle("hidden", c.source !== "image");
+  if (!prev || (prev.text !== c.text && document.activeElement !== $("text"))) $("text").value = c.text;
+  $("gray").checked = c.gray; $("tolerant").checked = c.tolerant;
+  if (document.activeElement !== $("seed")) $("seed").value = c.seed;
+  const val = {snr: c.snr_db, cfo: c.cfo * c.sample_rate_hz / 1000, rate: Math.round(c.rate_pps)};
+  for (const id of ["snr", "cfo", "rate"]) if (!editing.has(id)) { $(id).value = val[id]; $(id + "V").textContent = labels[id]($(id).value); }
+  $("sizeV").textContent = c.image_size + "×" + c.image_size;
+  if (prev) {                                                     // log operator changes
+    if (prev.mod !== c.mod) event(`Modulation set → ${MODNAME[c.mod]}`, "cfg");
+    if (prev.snr_db !== c.snr_db) event(`SNR set → ${c.snr_db.toFixed(1)} dB`, "cfg");
+    if (prev.cfo !== c.cfo) event(`Frequency offset set → ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`, "cfg");
+    if (prev.tolerant !== c.tolerant) event(`Damaged packets → ${c.tolerant ? "retained" : "dropped"}`, "cfg");
+    if (prev.source !== c.source) event(`Payload → ${c.source.toUpperCase()}`, "cfg");
+    if (prev.seed !== c.seed) event(`Seed → ${c.seed}`, "cfg");
+  }
+}
+
+// ------------------------------------------------------------------ formatting
+const SUP = {"-": "⁻", "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"};
+const nil = v => v === null || v === undefined;
+const pct = v => nil(v) ? "–" : (100 * v).toFixed(1) + "%";
+const sci = v => { if (nil(v)) return "–"; if (v === 0) return "0"; const e = Math.floor(Math.log10(v));
+                   return (v / 10 ** e).toFixed(1) + "×10" + String(e).split("").map(c => SUP[c]).join(""); };
+const kbps = v => nil(v) ? "–" : (v / 1000).toFixed(1) + " kbps";
+const db = v => nil(v) ? "–" : v.toFixed(1) + " dB";
+const esc = s => s.replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
+const pk = n => String(n).padStart(3, "0");
+const clock = () => new Date().toTimeString().slice(0, 8);
+
+// ------------------------------------------------------------------ event log (derived from the real state)
+function event(text, cls) { events.unshift({t: clock(), text, cls: cls || ""}); events = events.slice(0, 120); drawEvents(); }
+function drawEvents() { $("events").innerHTML = events.map(e => `<div><time>${e.t}</time><span class="${e.cls}">${esc(e.text)}</span></div>`).join(""); }
+function logPackets(s) {
+  if (s.sent < loggedUpTo + 1) { loggedUpTo = s.sent - 1; event("Run reset", "cfg"); }
+  for (const r of s.history) {
+    if (r.i <= loggedUpTo) continue;
+    const latest = s.last && r.i === s.sent - 1, p = `PKT ${pk(r.seq)}`;
+    const detected = latest ? s.last.sync_metric >= SYNC_THRESHOLD : r.snr_est !== null;
+    if (!detected) event(`${p}  no frame detected`, "err");
+    else {
+      event(`${p}  frame detected${latest ? " · sync " + s.last.sync_metric.toFixed(2) : ""}`);
+      if (latest && !nil(s.last.cfo_est)) event(`${p}  freq offset est ${(s.last.cfo_est * s.config.sample_rate_hz / 1000).toFixed(2)} kHz`);
+      if (r.bit_errors === null) event(`${p}  PHY header CRC failed`, "err");
+      else {
+        event(`${p}  header ok · ${MODNAME[r.mod]} · SNR est ${nil(r.snr_est) ? "–" : r.snr_est.toFixed(1)} dB`);
+        if (r.outcome === "ok") event(`${p}  CRC passed`, "ok");
+        else if (r.outcome === "damaged") event(`${p}  CRC failed · ${r.bit_errors} bit err · retained`, "warn");
+        else event(`${p}  CRC failed · ${r.bit_errors} bit err · dropped`, "err");
+      }
+    }
+    loggedUpTo = r.i;
+  }
+  if (prevDone === false && s.done) {
+    const ok = s.payload.status.filter(x => x === "ok").length;
+    event(`Message complete · ${ok}/${s.n_packets} packets passed CRC`, ok === s.n_packets ? "ok" : "warn");
+  }
+  if (prevRunning !== null && prevRunning !== s.running && !s.done) event(s.running ? "Transmission started" : "Transmission paused", "cfg");
+  prevRunning = s.running; prevDone = s.done;
+}
+
+// ------------------------------------------------------------------ canvas helpers
+function ctx2d(cv) {
+  const r = devicePixelRatio || 1, w = cv.clientWidth, h = +cv.getAttribute("height");
+  if (cv.width !== Math.round(w * r) || cv.height !== Math.round(h * r)) { cv.width = Math.round(w * r); cv.height = Math.round(h * r); cv.style.height = h + "px"; }
+  const g = cv.getContext("2d"); g.setTransform(r, 0, 0, r, 0, 0);
+  g.fillStyle = css("--well"); g.fillRect(0, 0, w, h);
+  g.font = "10px " + css("--mono"); return [g, w, h];
+}
+function ticks(lo, hi, n) {
+  const step0 = (hi - lo) / n, p = Math.pow(10, Math.floor(Math.log10(step0))), m = step0 / p;
+  const step = (m < 1.5 ? 1 : m < 3 ? 2 : m < 7 ? 5 : 10) * p, out = [];
+  for (let t = Math.ceil(lo / step) * step; t <= hi + 1e-9; t += step) out.push(+t.toFixed(10));
+  return out;
+}
+function grid(g, x0, y0, x1, y1, xt, yt, X, Y, fx, fy) {
+  g.lineWidth = 1; g.strokeStyle = css("--grid"); g.fillStyle = css("--dim");
+  for (const t of xt) { const x = Math.round(X(t)) + .5; g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke(); if (fx) { g.textAlign = "center"; g.fillText(fx(t), x, y1 + 12); } }
+  for (const t of yt) { const y = Math.round(Y(t)) + .5; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); if (fy) { g.textAlign = "right"; g.fillText(fy(t), x0 - 4, y + 3); } }
+  g.strokeStyle = css("--line2"); g.strokeRect(x0 + .5, y0 + .5, x1 - x0, y1 - y0);
+}
+function empty(g, w, h, t) { g.fillStyle = css("--dim"); g.textAlign = "center"; g.fillText(t, w / 2, h / 2 + 4); }
+
+function evm(points, ideal) {                                       // decision-directed RMS EVM (vs nearest ideal point)
+  if (!points || !points.length) return null;
+  let e = 0, p = 0;
+  for (const [i, q] of points) {
+    let best = Infinity, bi = 0, bq = 0;
+    for (const [a, b] of ideal) { const d = (i - a) ** 2 + (q - b) ** 2; if (d < best) { best = d; bi = a; bq = b; } }
+    e += best; p += bi * bi + bq * bq;
+  }
+  return Math.sqrt(e / p);
+}
+
+function drawConst() {
+  const [g, w, h] = ctx2d($("cConst")), s = Math.min(w - 24, h - 24), cx = w / 2, cy = h / 2, lim = 1.55;
+  const P = v => Math.max(-lim, Math.min(lim, v)) / lim * s / 2;
+  const x0 = cx - s / 2, y0 = cy - s / 2;
+  g.strokeStyle = css("--grid"); g.lineWidth = 1;
+  for (const t of [-1, -0.5, 0.5, 1]) { g.beginPath(); g.moveTo(cx + P(t) + .5, y0); g.lineTo(cx + P(t) + .5, y0 + s); g.moveTo(x0, cy - P(t) + .5); g.lineTo(x0 + s, cy - P(t) + .5); g.stroke(); }
+  g.strokeStyle = css("--line2"); g.strokeRect(x0 + .5, y0 + .5, s, s);
+  g.beginPath(); g.moveTo(cx + .5, y0); g.lineTo(cx + .5, y0 + s); g.moveTo(x0, cy + .5); g.lineTo(x0 + s, cy + .5); g.stroke();
+  g.fillStyle = css("--dim"); g.textAlign = "right"; g.fillText("I", x0 + s - 6, cy - 6); g.textAlign = "left"; g.fillText("Q", cx + 6, y0 + 13);
+  if (!S) return;
+  // decision boundaries: halfway between neighbouring ideal levels (for BPSK/QPSK this is the I or Q axis)
+  const lv = [...new Set(S.ideal.map(p => +p[0].toFixed(4)))].sort((a, b) => a - b);
+  const lq = [...new Set(S.ideal.map(p => +p[1].toFixed(4)))].sort((a, b) => a - b);
+  g.setLineDash([2, 4]); g.strokeStyle = "rgba(169,139,240,.4)";
+  for (let k = 1; k < lv.length; k++) { const v = (lv[k - 1] + lv[k]) / 2; g.beginPath(); g.moveTo(cx + P(v) + .5, y0); g.lineTo(cx + P(v) + .5, y0 + s); g.stroke(); }
+  for (let k = 1; k < lq.length; k++) { const v = (lq[k - 1] + lq[k]) / 2; g.beginPath(); g.moveTo(x0, cy - P(v) + .5); g.lineTo(x0 + s, cy - P(v) + .5); g.stroke(); }
+  g.setLineDash([]);
+  const shown = persist.filter(p => p.length);
+  if (!shown.length) empty(g, w, h, S.last ? "PHY header lost · no symbols" : "idle · press RUN or STEP");
+  persist.forEach((pts, k) => {                                   // scope persistence: older packets fade out
+    const age = persist.length - 1 - k;
+    g.fillStyle = css("--sig"); g.globalAlpha = age === 0 ? 0.9 : 0.24 / age;
+    for (const [i, q] of pts) g.fillRect(cx + P(i) - 1.25, cy - P(q) - 1.25, 2.5, 2.5);
+  });
+  g.globalAlpha = 1; g.strokeStyle = "rgba(230,233,238,.5)"; g.lineWidth = 1.1;
+  for (const [i, q] of S.ideal) { const x = cx + P(i), y = cy - P(q); g.beginPath(); g.moveTo(x - 4, y - 4); g.lineTo(x + 4, y + 4); g.moveTo(x + 4, y - 4); g.lineTo(x - 4, y + 4); g.stroke(); }
+  g.fillStyle = css("--dim"); g.textAlign = "left";
+  g.fillText("× ideal   ┆ decision boundary   persistence 4 pkt", x0 + 6, y0 + s - 7);
+}
+
+function drawPsd(L) {
+  const [g, w, h] = ctx2d($("cPsd")), x0 = 34, x1 = w - 8, y0 = 8, y1 = h - 18;
+  if (!L) { grid(g, x0, y0, x1, y1, [], [], null, null); empty(g, w, h, "no burst yet"); return [null, null]; }
+  const f = L.psd.f_khz, d = L.psd.db, hi = Math.ceil(Math.max(...d) / 10) * 10 + 4, lo = hi - 54;
+  const X = v => x0 + (v - f[0]) / (f[f.length - 1] - f[0]) * (x1 - x0), Y = v => y0 + (hi - Math.max(lo, v)) / (hi - lo) * (y1 - y0);
+  const bw = S.config.sample_rate_hz / 8 * 1.35 / 2000;          // occupied half-bandwidth (kHz) = Rs(1+β)/2
+  grid(g, x0, y0, x1, y1, ticks(f[0], f[f.length - 1], 4), ticks(lo, hi, 4), X, Y, v => v, v => v);
+  g.fillStyle = css("--sig-dim"); g.fillRect(X(-bw), y0 + 1, X(bw) - X(-bw), y1 - y0 - 1);
+  const out = d.filter((v, i) => Math.abs(f[i]) > bw * 1.2).sort((a, b) => a - b), nf = out[Math.floor(out.length / 2)];
+  g.setLineDash([4, 3]); g.strokeStyle = "rgba(240,178,60,.55)"; g.beginPath(); g.moveTo(x0, Y(nf) + .5); g.lineTo(x1, Y(nf) + .5); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "rgba(240,178,60,.85)"; g.textAlign = "left"; g.fillText("NOISE FLOOR", x0 + 6, Y(nf) - 5);
+  g.strokeStyle = css("--line2"); g.beginPath(); g.moveTo(X(0) + .5, y0); g.lineTo(X(0) + .5, y1); g.stroke();
+  if (prevPsd) { g.strokeStyle = "rgba(63,198,224,.18)"; g.lineWidth = 1; g.beginPath();
+    prevPsd.forEach((v, i) => { const x = X(f[i]), y = Y(v); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); }
+  g.strokeStyle = css("--sig"); g.lineWidth = 1.3; g.beginPath();
+  d.forEach((v, i) => { const x = X(f[i]), y = Y(v); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+  g.fillStyle = css("--dim"); g.textAlign = "left"; g.fillText("dB", 3, y0 + 8);
+  return [nf, 2 * bw];
+}
+
+function drawWave(L) {
+  const [g, w, h] = ctx2d($("cWave")), x0 = 34, x1 = w - 8, y0 = 8, y1 = h - 18;
+  if (!L) { grid(g, x0, y0, x1, y1, [], [], null, null); empty(g, w, h, "no burst yet"); return; }
+  const wv = L.wave, n = wv.i.length, m = Math.max(1e-6, ...wv.i.map(Math.abs), ...wv.q.map(Math.abs)) * 1.08;
+  const X = k => x0 + k / (n - 1) * (x1 - x0), Y = v => (y0 + y1) / 2 - v / m * (y1 - y0) / 2;
+  const sx = sm => (sm - wv.start) / wv.step;
+  grid(g, x0, y0, x1, y1, ticks(0, (n - 1) * wv.step, 5).map(t => t / wv.step), [-m / 1.08, 0, m / 1.08], X, Y,
+       t => String(Math.round(t * wv.step)), v => v.toFixed(1));
+  if (wv.frame_start >= 0) {
+    const a = sx(wv.frame_start), b = Math.min(n - 1, sx(wv.frame_start + PREAMBLE_SAMPLES));
+    if (a >= 0 && a < n) {
+      g.fillStyle = "rgba(230,233,238,.05)"; g.fillRect(X(a), y0 + 1, X(b) - X(a), y1 - y0 - 1);
+      g.fillStyle = css("--muted"); g.textAlign = "left"; g.fillText("PREAMBLE · 63 sym", X(a) + 5, y1 - 5);
+      g.strokeStyle = css("--ink"); g.setLineDash([3, 3]); g.beginPath(); g.moveTo(X(a) + .5, y0); g.lineTo(X(a) + .5, y1); g.stroke(); g.setLineDash([]);
+      g.fillStyle = css("--ink"); g.fillText("FRAME START", X(a) + 5, y0 + 12);
+    }
+  }
+  for (const [arr, col] of [[wv.q, css("--q")], [wv.i, css("--sig")]]) {
+    g.strokeStyle = col; g.lineWidth = 1; g.globalAlpha = .9; g.beginPath();
+    arr.forEach((v, k) => k ? g.lineTo(X(k), Y(v)) : g.moveTo(X(k), Y(v))); g.stroke();
+  }
+  g.globalAlpha = 1;
+}
+
+// ------------------------------------------------------------------ panels
+function setV(id, main, sub, cls) { const el = $(id); el.className = "v" + (cls ? " " + cls : ""); el.innerHTML = main + (sub === undefined ? "" : `<small>${sub}</small>`); }
+function rxStatus(s) {
+  const L = s.last;
+  if (!L) return ["", "IDLE"];
+  if (L.sync_metric < SYNC_THRESHOLD) return ["err", "NO SIGNAL"];
+  if (L.bit_errors === null) return ["err", "HEADER FAIL"];
+  return L.outcome === "ok" ? ["on", "LOCKED"] : ["warn", "LOCKED · CRC ERR"];
+}
+function telemetry(s) {
+  const R = s.report, Q = s.report_recent, [lc, lt] = rxStatus(s), c = s.config;
+  $("vRx").innerHTML = `<span class="led ${lc}"></span>${lt}`;
+  const ps = R.packet_success_rate;
+  setV("vPs", pct(ps), pct(Q.packet_success_rate), nil(ps) ? "" : ps >= .9 ? "ok" : ps >= .5 ? "warn" : "err");
+  setV("vPl", pct(R.packet_error_rate), pct(Q.packet_error_rate));
+  setV("vBer", sci(R.ber), sci(Q.ber));
+  setV("vSnr", db(R.snr_est_db_mean), "set " + c.snr_db.toFixed(1) + " dB");
+  setV("vGp", kbps(R.goodput_bps), kbps(Q.goodput_bps));
+  setV("vTp", kbps(R.throughput_bps), kbps(Q.throughput_bps));
+  setV("vLat", nil(R.latency_frame_ms) ? "–" : R.latency_frame_ms.toFixed(2) + " ms", "airtime");
+  setV("vOh", pct(R.overhead_fraction));
+  setV("vMod", MODNAME[c.mod], R.mod === "mixed" ? "run: mixed" : undefined, "sig");
+  setV("vCh", "AWGN", "Δf " + (c.cfo * c.sample_rate_hz / 1000).toFixed(2) + " kHz");
+  setV("vRt", nil(R.realtime_factor) ? "–" : R.realtime_factor.toFixed(2) + "×", nil(Q.realtime_factor) ? undefined : Q.realtime_factor.toFixed(2) + "×",
+       nil(R.realtime_factor) ? "" : R.realtime_factor <= 1 ? "ok" : "warn");
+}
+function pipeline(s) {
+  const c = s.config, L = s.last, st = s.payload.status;
+  const set = (id, t, cls) => { $(id).textContent = t; $(id).className = "v" + (cls ? " " + cls : ""); };
+  set("pPayload", c.source === "text" ? `TEXT · ${s.message_bytes} B` : `IMAGE · ${c.image_size}×${c.image_size}${c.gray ? " gray" : ""}`);
+  set("pPack", `${s.n_packets} × ≤${c.max_payload} B + CRC-16`);
+  set("pMod", MODNAME[c.mod]);
+  set("pChan", `AWGN · ${c.snr_db.toFixed(1)} dB · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
+  if (!L) { for (const id of ["pSync", "pEq", "pDem", "pCrc"]) set(id, "–"); }
+  else {
+    const det = L.sync_metric >= SYNC_THRESHOLD;
+    set("pSync", `ρ ${L.sync_metric.toFixed(2)}`, det ? "ok" : "err");
+    set("pEq", det ? `pilots · SNR ${nil(L.snr_est_db) ? "–" : L.snr_est_db.toFixed(1)} dB` : "–");
+    set("pDem", L.bit_errors === null ? "header lost" : `${L.bit_errors} bit err`, L.bit_errors === null ? "err" : L.bit_errors ? "warn" : "");
+    set("pCrc", L.outcome === "ok" ? "PASS" : L.bit_errors === null ? "—" : L.outcome === "damaged" ? "FAIL · KEPT" : "FAIL · DROP",
+        L.outcome === "ok" ? "ok" : L.outcome === "damaged" ? "warn" : "err");
+  }
+  const ok = st.filter(x => x === "ok").length;
+  set("pRec", `${ok}/${s.n_packets} pkt`, s.done ? (ok === s.n_packets ? "ok" : "warn") : "");
+}
+function payload(s) {
+  const P = s.payload, isImg = P.kind === "image", st = P.status;
+  $("textPane").classList.toggle("hidden", isImg); $("imgPane").classList.toggle("hidden", !isImg);
+  $("payTitle").textContent = isImg ? "Image transfer" : "Message transfer";
+  const n = k => st.filter(x => x === k).length;
+  $("payTag").textContent = `${s.sent}/${s.n_packets} PKT SENT`;
+  if (isImg) {
+    if (P.image !== lastImg) { $("imgRx").src = P.image; lastImg = P.image; }
+    if ($("imgOrig").getAttribute("src") !== P.original) $("imgOrig").setAttribute("src", P.original);
+    $("iPsnr").textContent = nil(P.psnr_db) ? "–" : P.psnr_db.toFixed(1) + " dB";
+    $("iSsim").textContent = nil(P.ssim) ? "–" : P.ssim.toFixed(3);
+    $("iOk").textContent = n("ok"); $("iDam").textContent = n("damaged"); $("iLost").textContent = n("lost");
+    $("iHdr").textContent = s.sent === 0 ? "–" : P.header_ok ? "ok" : "fallback";
+  } else {
+    if ($("txText").dataset.v !== s.config.text) { $("txText").textContent = s.config.text; $("txText").dataset.v = s.config.text; }
+    $("txBytes").textContent = s.message_bytes + " B";
+    $("rxText").innerHTML = P.segments.map(x => `<span class="${x.state}">${esc(x.text)}</span>`).join("");
+    const bad = P.segments.filter(x => x.state === "damaged" || x.state === "lost").length;
+    $("rxState").textContent = s.sent === 0 ? "" : bad ? `${bad} segment${bad > 1 ? "s" : ""} impaired` : s.done ? "exact match" : "exact so far";
+    $("rxState").style.color = bad ? css("--warn") : s.done ? css("--ok") : "";
+  }
+  const map = $("map");
+  if (map.children.length !== st.length) map.innerHTML = st.map(() => "<div></div>").join("");
+  st.forEach((x, i) => { const d = map.children[i]; if (d.className !== x) { d.className = x; d.title = `packet ${i}: ${x}`; } });
+}
+function table(s) {
+  const word = {ok: ["ok", "on", "CRC PASSED"], damaged: ["warn", "warn", "RETAINED"], lost: ["err", "err", "LOST"]};
+  $("hTag").textContent = `${s.sent} / ${s.n_packets} TRANSMITTED`;
+  $("log").innerHTML = s.history.slice().reverse().map(r => {
+    const [tc, led, w] = word[r.outcome];
+    const crc = r.bit_errors === null ? "—" : r.outcome === "ok" ? "PASS" : "FAIL";
+    return `<tr><td>${pk(r.seq)}</td><td class="${tc}"><span class="led ${led}"></span>${w}</td><td>${MODNAME[r.mod]}</td>
+      <td>${r.snr_set.toFixed(1)} dB</td><td>${nil(r.snr_est) ? "–" : r.snr_est.toFixed(1) + " dB"}</td>
+      <td>${r.bit_errors === null ? "–" : r.bit_errors + " / " + r.n_bits}</td><td class="${crc === "PASS" ? "ok" : crc === "FAIL" ? tc : "err"}">${crc}</td>
+      <td>${r.airtime_ms.toFixed(2)} ms</td><td>${r.process_ms.toFixed(1)} ms</td></tr>`; }).join("");
+}
+
+function drawSignals() {
+  const s = S, L = s.last, c = s.config;
+  drawConst();
+  const [nf, bw] = drawPsd(L);
+  drawWave(L);
+  const e = L ? evm(L.constellation, s.ideal) : null;
+  $("rSnr").textContent = L ? `${c.snr_db.toFixed(1)} set · ${nil(L.snr_est_db) ? "–" : L.snr_est_db.toFixed(1)} est` : "–";
+  $("rEvm").textContent = nil(e) ? "–" : (100 * e).toFixed(1) + "%";
+  $("rBe").textContent = !L ? "–" : L.bit_errors === null ? "header lost" : `${L.bit_errors} / ${L.n_bits}`;
+  $("rPkt").textContent = L ? pk(L.seq) : "–";
+  $("rBw").textContent = bw ? bw.toFixed(1) + " kHz" : "–";
+  $("rNf").textContent = nil(nf) ? "–" : nf.toFixed(1) + " dB";
+  $("rSync").textContent = L ? L.sync_metric.toFixed(2) : "–";
+  $("rCfo").textContent = L && !nil(L.cfo_est) ? (L.cfo_est * c.sample_rate_hz / 1000).toFixed(2) + " kHz" : "–";
+  $("sTag").textContent = L ? `kHz · dB · PKT ${pk(L.seq)}` : "kHz · dB";
+  $("wTag").textContent = L ? `samples · PKT ${pk(L.seq)}` : "samples";
+}
+
+function render() {
+  const s = S, L = s.last, c = s.config;
+  $("tLink").innerHTML = s.running ? `<span class="led on"></span>LINK ACTIVE` : s.done ? `<span class="led sig"></span>COMPLETE` : `<span class="led"></span>STANDBY`;
+  $("tSim").textContent = s.running ? "RUNNING" : s.done ? "DONE" : s.sent ? "PAUSED" : "READY";
+  $("tSeed").textContent = c.seed; $("tFs").textContent = (c.sample_rate_hz / 1e6).toFixed(2) + " MS/s";
+  $("tCount").textContent = `${s.sent} / ${s.n_packets} PKT · ${s.message_bytes} B`;
+  $("bar").style.width = (100 * s.sent / s.n_packets) + "%";
+  $("runTag").textContent = s.running ? "RUN" : "STOP";
+  $("goLed").className = "led" + (s.running ? " on" : "");
+  $("goTxt").textContent = s.running ? "Pause" : s.done ? "Rerun" : "Run";
+  $("cMod").textContent = MODNAME[c.mod];
+  logPackets(s); telemetry(s); pipeline(s); payload(s); table(s);
+  if (s.sent !== lastSent) {
+    if (s.sent < lastSent || s.sent === 0) { persist = []; prevPsd = curPsd = null; }
+    else if (L) { persist.push(L.constellation); persist = persist.slice(-4); prevPsd = curPsd; curPsd = L.psd.db; }
+    lastSent = s.sent;
+    drawSignals();
+  }
+}
+
+async function poll() {
+  if (busy) return; busy = true;
+  try {
+    S = await api("/api/state");
+    const cj = JSON.stringify(S.config);
+    if (cj !== lastCfg) { fillControls(S.config, lastCfg && JSON.parse(lastCfg)); lastCfg = cj; drawConst(); }
+    render();
+  }
+  catch (e) { say("lost contact with the Python server", true); }
+  finally { busy = false; }
+}
+addEventListener("resize", () => { if (S) drawSignals(); });
+event("Testbed online", "cfg");
+poll(); setInterval(poll, 150);
+</script>
+</body>
+</html>
