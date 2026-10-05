@@ -1,0 +1,61 @@
+{
+  "goodput_best_modulation_switches": [
+    {
+      "at_snr_db": 1.0,
+      "from": "bpsk",
+      "to": "qpsk"
+    },
+    {
+      "at_snr_db": 9.0,
+      "from": "qpsk",
+      "to": "qam16"
+    }
+  ],
+  "peak_goodput_kbps": {
+    "bpsk": 89.13649025069637,
+    "qpsk": 155.33980582524273,
+    "qam16": 247.1042471042471
+  },
+  "overhead_fraction_64B": {
+    "bpsk": 0.2869080779944291,
+    "qpsk": 0.37864077669902907,
+    "qam16": 0.5057915057915058
+  },
+  "latency_frame_ms_64B": {
+    "bpsk": 5.744,
+    "qpsk": 3.296,
+    "qam16": 2.072
+  },
+  "snr_for_per_below_10pct": {
+    "bpsk": 0.0,
+    "qpsk": 3.0,
+    "qam16": 10.0
+  },
+  "snr_for_ber_below_1e-3": {
+    "bpsk": -2.0,
+    "qpsk": 1.0,
+    "qam16": 9.0
+  },
+  "packet_size_best_by_snr": {
+    "-2": 16,
+    "-1": 16,
+    "0": 16,
+    "1": 64,
+    "2": 256,
+    "3": 256,
+    "4": 256,
+    "5": 1024,
+    "6": 1024,
+    "7": 1024,
+    "8": 1024,
+    "9": 1024,
+    "10": 1024,
+    "11": 1024,
+    "12": 1024
+  },
+  "classifier_accuracy_on_link_frames_snr_ge_0": {
+    "bpsk": 1.0,
+    "qpsk": 0.9924242424242423,
+    "qam16": 0.996969696969697
+  }
+}
