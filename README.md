@@ -61,7 +61,26 @@ packet if its header is self-consistent (CRC-valid packets always take priority)
 | Mean PSNR gain of error-tolerant mode where packets were lost | +10.5 dB | +9.4 dB | +5.7 dB |
 | SNR where the compressed PNG always decodes | 2 dB | 6 dB | 12 dB |
 
+**Phase 3 (done): link metrics.** One scorecard for every transmission: frame detection, header success,
+packet success/error rate, BER, SER, PHY rate, throughput, goodput (useful bits that arrived intact),
+spectral efficiency, overhead and airtime latency (default 1 MS/s → 125 kBd, 168.75 kHz occupied bandwidth).
+
+| Measured (64-byte packets, 24 packets × 2 trials per point) | BPSK | QPSK | 16-QAM |
+|---|---|---|---|
+| Peak goodput | 89 kbps | 155 kbps | 247 kbps |
+| Overhead (preamble + headers + pilots + CRC) | 29% | 38% | 51% |
+| Airtime per frame | 5.7 ms | 3.3 ms | 2.1 ms |
+| SNR for packet error rate < 10% | 0 dB | 3 dB | 10 dB |
+| SNR range where it gives the highest goodput | below 1 dB | 1–8 dB | 9 dB and above |
+
+- The best modulation changes with SNR (switch points 1 dB and 9 dB): the basis for adaptive modulation.
+- Packet size is a trade-off: small packets survive noise, large packets waste less on overhead
+  (16 B: 69% overhead, 1024 B: 9%). Best goodput: 16 B at ≤ 0 dB, 64 B at 1 dB, 256 B at 2–4 dB, 1024 B at ≥ 5 dB (QPSK).
+- The original CNN, never trained on these frames, recognises the link's own modulation from a 1024-sample
+  payload window: 100% / 99.2% / 99.7% (BPSK / QPSK / 16-QAM) at SNR ≥ 0 dB.
+
 ```bash
+python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
 python scripts/demo_text_link.py --text "Hello satellite" --mod qpsk --snr 3   # every stage, printed + figure
@@ -98,10 +117,10 @@ spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupan
                   metrics, experiments                       (communication link)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
-                  demo_image_link, exp_image_link
+                  demo_image_link, exp_image_link, exp_link_metrics
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            114 automated checks
+tests/            122 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -110,7 +129,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 114 checks
+python -m pytest                    # 122 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
