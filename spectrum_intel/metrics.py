@@ -134,13 +134,18 @@ def link_report(result, sample_rate_hz: float = DEFAULT_SAMPLE_RATE_HZ) -> dict:
       latency_frame_ms     airtime of one frame (one-way, no retransmission)
       latency_message_ms   airtime until the last packet of the message has been sent
     Error accounting: raw bit errors (before any correction), symbol errors, packet failures.
+    Packets may use different modulations (adaptive or live-switched links): mod is then
+    "mixed" and the PHY rate uses the symbol-weighted bits per symbol.
     """
     p = result.packets
     if not p:
         return {}
     from spectrum_intel.modulation import bits_per_symbol
-    mod = p[0].mod
-    k = bits_per_symbol(mod)
+    mods = sorted({x.mod for x in p})
+    mod = mods[0] if len(mods) == 1 else "mixed"
+    # bits per payload symbol, weighted by airtime spent on each modulation (= k for one modulation)
+    n_pay = sum(x.n_symbols for x in p)
+    k = (sum(x.n_symbols * bits_per_symbol(x.mod) for x in p) / n_pay) if n_pay else bits_per_symbol(p[0].mod)
     airtime_s = sum(x.n_samples for x in p) / sample_rate_hz
     demod = [x for x in p if x.bit_errors is not None]
     bits_demod = sum(x.n_bits for x in demod)

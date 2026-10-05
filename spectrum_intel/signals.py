@@ -62,11 +62,27 @@ def random_symbols(mod: str, n: int, rng: np.random.Generator) -> np.ndarray:
 # --------------------------------------------------------------------------
 # Pulse shaping
 # --------------------------------------------------------------------------
+CACHE_TAPS = True          # filter taps are computed once per (beta, sps, span); False = recompute every call
+_TAP_CACHE: dict = {}
+
+
 def rrc_taps(beta: float = 0.35, sps: int = 8, span: int = 8) -> np.ndarray:
     """Root-raised-cosine filter taps, unit energy.
 
     beta: roll-off (0..1), sps: samples per symbol, span: filter length in symbols.
+    The taps depend only on these three numbers, so they are cached (a copy is
+    returned, so callers can never change the cached version).
     """
+    key = (float(beta), int(sps), int(span))
+    if CACHE_TAPS and key in _TAP_CACHE:
+        return _TAP_CACHE[key].copy()
+    h = _rrc_taps_compute(beta, sps, span)
+    if CACHE_TAPS:
+        _TAP_CACHE[key] = h
+    return h.copy()
+
+
+def _rrc_taps_compute(beta: float, sps: int, span: int) -> np.ndarray:
     t = np.arange(-span * sps // 2, span * sps // 2 + 1) / sps  # time in symbol periods
     h = np.empty_like(t)
     for i, ti in enumerate(t):

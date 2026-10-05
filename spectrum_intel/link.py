@@ -60,6 +60,47 @@ class LinkResult:
         return sum(p.bit_errors for p in got) / n if n else float("nan")
 
 
+@dataclass
+class PacketTransfer:
+    """Everything that happened to one packet: what was sent, received and decided."""
+    record: PacketRecord
+    frame: object               # TxFrame
+    rx: np.ndarray              # received samples (after the channel)
+    res: object                 # RxResult
+    good: Packet | None         # packet that passed the CRC
+    rough: Packet | None        # damaged packet kept in error-tolerant mode
+
+
+def transfer_packet(pkt: Packet, n_packets: int, mod: str, snr_db: float, rng: np.random.Generator, *,
+                    max_payload: int = 64, cfo: float = 0.0, cfo_search: float = 0.0,
+                    keep_corrupted: bool = False) -> PacketTransfer:
+    """Send ONE packet through transmitter -> channel -> receiver and score it.
+
+    Shared by `send` (whole messages) and the real-time engine (one packet per step),
+    so both produce identical results for the same random generator.
+    """
+    block = pkt.to_bytes()
+    frame = build_frame(block, mod)
+    rx, _ = ch.awgn_link(frame.iq, snr_db, rng, cfo=cfo)
+    res = receive(rx, cfo_search=cfo_search)
+    crc_ok, errs, sym_err, good, rough = False, None, None, None, None
+    tx_bits = bytes_to_bits(block)
+    if res.header_ok:
+        errs = bit_errors(tx_bits, res.payload_bits)
+        rx_pay = res.data_symbols[HEADER_BITS:]
+        sym_err = int(np.sum(nearest_index(rx_pay, mod) != symbol_indices(tx_bits, mod)[:len(rx_pay)]))
+        parsed, crc_ok = Packet.from_bytes(res.payload)
+        if crc_ok:
+            good = parsed
+        elif keep_corrupted:
+            rough = parse_unchecked(res.payload, n_packets, max_payload)
+    record = PacketRecord(pkt.seq, mod, len(block) * 8, res.detected, res.header_ok, crc_ok,
+                          rough is not None, errs, res.snr_est_db, res.cfo_est, len(frame.iq),
+                          data_bytes=len(pkt.data), symbol_errors=sym_err,
+                          n_symbols=frame.n_payload_symbols)
+    return PacketTransfer(record, frame, rx, res, good, rough)
+
+
 def send(data: bytes, mod: str, snr_db: float, rng: np.random.Generator, *,
          max_payload: int = 64, cfo: float = 0.0, cfo_search: float = 0.0,
          keep_frames: bool = False, keep_corrupted: bool = False, fill: int = 0x00) -> LinkResult:
@@ -73,30 +114,15 @@ def send(data: bytes, mod: str, snr_db: float, rng: np.random.Generator, *,
     packets = segment(data, max_payload)
     records, good, frames, corrupted, rough_pkts = [], [], [], [], []
     for pkt in packets:
-        block = pkt.to_bytes()
-        frame = build_frame(block, mod)
-        rx, _ = ch.awgn_link(frame.iq, snr_db, rng, cfo=cfo)
-        res = receive(rx, cfo_search=cfo_search)
-        crc_ok, errs, used, sym_err = False, None, False, None
-        tx_bits = bytes_to_bits(block)
-        n_sym = frame.n_payload_symbols
-        if res.header_ok:
-            errs = bit_errors(tx_bits, res.payload_bits)
-            rx_pay = res.data_symbols[HEADER_BITS:]
-            sym_err = int(np.sum(nearest_index(rx_pay, mod) != symbol_indices(tx_bits, mod)[:len(rx_pay)]))
-            parsed, crc_ok = Packet.from_bytes(res.payload)
-            if crc_ok:
-                good.append(parsed)
-            elif keep_corrupted:
-                rough = parse_unchecked(res.payload, len(packets), max_payload)
-                if rough is not None:
-                    rough_pkts.append(rough)
-                    used = True
-        records.append(PacketRecord(pkt.seq, mod, len(block) * 8, res.detected, res.header_ok, crc_ok,
-                                    used, errs, res.snr_est_db, res.cfo_est, len(frame.iq),
-                                    data_bytes=len(pkt.data), symbol_errors=sym_err, n_symbols=n_sym))
+        t = transfer_packet(pkt, len(packets), mod, snr_db, rng, max_payload=max_payload,
+                            cfo=cfo, cfo_search=cfo_search, keep_corrupted=keep_corrupted)
+        records.append(t.record)
+        if t.good is not None:
+            good.append(t.good)
+        if t.rough is not None:
+            rough_pkts.append(t.rough)
         if keep_frames:
-            frames.append((frame, rx, res))
+            frames.append((t.frame, t.rx, t.res))
     # CRC-valid packets always win; a damaged packet only fills a gap nobody else filled
     have = {p.seq for p in good}
     for p in rough_pkts:
