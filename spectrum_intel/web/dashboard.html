@@ -210,9 +210,16 @@
 
     <div class="sec">
       <div class="lbl">Modulation</div>
-      <div class="sel" id="mod"><button data-v="bpsk">BPSK</button><button data-v="qpsk">QPSK</button><button data-v="qam16">16-QAM</button></div>
+      <div class="sel" id="mod"><button data-v="bpsk">BPSK</button><button data-v="qpsk">QPSK</button><button data-v="qam16">16-QAM</button><button data-v="auto">AUTO</button></div>
+      <div id="amcBox" class="hidden">
+        <div class="lbl" style="margin-top:10px">Adaptation policy <span class="mono" id="amcNext"></span></div>
+        <div class="sel" id="amcpol"><button data-v="threshold">THRESHOLD</button><button data-v="olla">OLLA</button><button data-v="goodput">GOODPUT</button></div>
+        <div class="hint">Chooses each packet's modulation from the receiver's last SNR report (one packet old) and ACK/NACK.</div>
+      </div>
       <div class="lbl" style="margin-top:12px">SNR per sample <span class="mono" id="snrV"></span></div>
       <div class="fader"><input type="range" id="snr" min="-8" max="20" step="0.5"><div class="ticks"><span>-8</span><span>-1</span><span>6</span><span>13</span><span>20</span></div></div>
+      <div class="lbl" style="margin-top:10px">SNR swing (moving user) <span class="mono" id="swingV"></span></div>
+      <div class="fader"><input type="range" id="swing" min="0" max="12" step="1"><div class="ticks"><span>0</span><span>3</span><span>6</span><span>9</span><span>12</span></div></div>
     </div>
 
     <div class="sec">
@@ -334,7 +341,7 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 const MODNAME = {bpsk: "BPSK", qpsk: "QPSK", qam16: "16-QAM"};
 const SYNC_THRESHOLD = 0.58, PREAMBLE_SAMPLES = 63 * 8;          // receiver constants (receiver.py, transmitter.py)
 let S = null, lastCfg = null, busy = false, lastSent = -1, lastImg = "";
-let persist = [], prevPsd = null, curPsd = null, events = [], loggedUpTo = -1, prevRunning = null, prevDone = null;
+let prevPktMod = null, persist = [], prevPsd = null, curPsd = null, events = [], loggedUpTo = -1, prevRunning = null, prevDone = null;
 
 async function api(path, body, raw) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", body: raw ? body : JSON.stringify(body),
@@ -355,7 +362,8 @@ async function control(action, config) {
 function seg(id, onPick) { $(id).addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) onPick(b.dataset.v); }); }
 function setSeg(id, v) { for (const b of $(id).children) b.classList.toggle("on", b.dataset.v === String(v)); }
 seg("source", v => control("update", {source: v}));
-seg("mod", v => { setSeg("mod", v); control("update", {mod: v}); });
+seg("mod", v => { setSeg("mod", v); control("update", v === "auto" ? {adaptive: true} : {adaptive: false, mod: v}); });
+seg("amcpol", v => control("update", {amc_policy: v}));
 seg("size", v => control("update", {image_size: +v}));
 $("gray").onchange = e => control("update", {gray: e.target.checked});
 $("tolerant").onchange = e => control("update", {tolerant: e.target.checked});
@@ -370,6 +378,7 @@ const SLIDERS = {
   dop:  {key: "doppler_hz",      fmt: v => (+v === 0 ? "0 Hz (block)" : v + " Hz"), from: c => c.doppler_hz},
   dly:  {key: "delay_spread_us", fmt: v => v + " µs",               from: c => c.delay_spread_us},
   sir:  {key: "sir_db",          fmt: v => (+v).toFixed(0) + " dB",  from: c => c.sir_db},
+  swing:{key: "snr_swing_db",    fmt: v => (+v === 0 ? "off" : "± " + v + " dB"), from: c => c.snr_swing_db},
 };
 const editing = new Set();                                         // controls the operator is touching right now
 for (const [id, sl] of Object.entries(SLIDERS)) {
@@ -396,7 +405,8 @@ $("file").onchange = async e => {
 };
 
 function fillControls(c, prev) {
-  setSeg("source", c.source); setSeg("mod", c.mod); setSeg("size", c.image_size);
+  setSeg("source", c.source); setSeg("mod", c.adaptive ? "auto" : c.mod); setSeg("size", c.image_size);
+  setSeg("amcpol", c.amc_policy); $("amcBox").classList.toggle("hidden", !c.adaptive);
   $("textBox").classList.toggle("hidden", c.source !== "text");
   $("imageBox").classList.toggle("hidden", c.source !== "image");
   if (!prev || (prev.text !== c.text && document.activeElement !== $("text"))) $("text").value = c.text;
@@ -411,7 +421,10 @@ function fillControls(c, prev) {
   $("sirRow").classList.toggle("hidden", c.jammer === "none");
   $("sizeV").textContent = c.image_size + "×" + c.image_size;
   if (prev) {                                                     // log operator changes
-    if (prev.mod !== c.mod) event(`Modulation set → ${MODNAME[c.mod]}`, "cfg");
+    if (prev.mod !== c.mod && !c.adaptive) event(`Modulation set → ${MODNAME[c.mod]}`, "cfg");
+    if (prev.adaptive !== c.adaptive) event(`Adaptive modulation ${c.adaptive ? "ON (" + c.amc_policy + ")" : "OFF → " + MODNAME[c.mod]}`, "cfg");
+    else if (c.adaptive && prev.amc_policy !== c.amc_policy) event(`Adaptation policy → ${c.amc_policy}`, "cfg");
+    if (prev.snr_swing_db !== c.snr_swing_db) event(`SNR swing → ${c.snr_swing_db ? "± " + c.snr_swing_db + " dB" : "off"}`, "cfg");
     if (prev.snr_db !== c.snr_db) event(`SNR set → ${c.snr_db.toFixed(1)} dB`, "cfg");
     if (prev.cfo !== c.cfo) event(`Frequency offset set → ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`, "cfg");
     if (prev.tolerant !== c.tolerant) event(`Damaged packets → ${c.tolerant ? "retained" : "dropped"}`, "cfg");
@@ -440,7 +453,7 @@ const clock = () => new Date().toTimeString().slice(0, 8);
 function event(text, cls) { events.unshift({t: clock(), text, cls: cls || ""}); events = events.slice(0, 120); drawEvents(); }
 function drawEvents() { $("events").innerHTML = events.map(e => `<div><time>${e.t}</time><span class="${e.cls}">${esc(e.text)}</span></div>`).join(""); }
 function logPackets(s) {
-  if (s.sent < loggedUpTo + 1) { loggedUpTo = s.sent - 1; event("Run reset", "cfg"); }
+  if (s.sent < loggedUpTo + 1) { loggedUpTo = s.sent - 1; prevPktMod = null; event("Run reset", "cfg"); }
   for (const r of s.history) {
     if (r.i <= loggedUpTo) continue;
     const latest = s.last && r.i === s.sent - 1, p = `PKT ${pk(r.seq)}`;
@@ -457,6 +470,9 @@ function logPackets(s) {
         else event(`${p}  CRC failed · ${r.bit_errors} bit err · dropped`, "err");
       }
     }
+    if (prevPktMod !== null && r.mod !== prevPktMod)
+      event(`${s.config.adaptive ? "AMC" : "Modulation"} → ${MODNAME[r.mod]} for PKT ${pk(r.seq)}`, "cfg");
+    prevPktMod = r.mod;
     loggedUpTo = r.i;
   }
   if (prevDone === false && s.done) {
@@ -617,7 +633,8 @@ function telemetry(s) {
   setV("vTp", kbps(R.throughput_bps), kbps(Q.throughput_bps));
   setV("vLat", nil(R.latency_frame_ms) ? "–" : R.latency_frame_ms.toFixed(2) + " ms", "airtime");
   setV("vOh", pct(R.overhead_fraction));
-  setV("vMod", MODNAME[c.mod], R.mod === "mixed" ? "run: mixed" : undefined, "sig");
+  if (c.adaptive) setV("vMod", MODNAME[s.amc.next], `AUTO · ${s.amc.policy}` + (s.amc.policy === "olla" ? ` · ${s.amc.offset_db >= 0 ? "+" : ""}${s.amc.offset_db.toFixed(1)} dB` : ""), "sig");
+  else setV("vMod", MODNAME[c.mod], R.mod === "mixed" ? "run: mixed" : undefined, "sig");
   setV("vCh", chanShort(c), "Δf " + (c.cfo * c.sample_rate_hz / 1000).toFixed(2) + " kHz");
   $("chChip").textContent = chanShort(c);
   setV("vRt", nil(R.realtime_factor) ? "–" : R.realtime_factor.toFixed(2) + "×", nil(Q.realtime_factor) ? undefined : Q.realtime_factor.toFixed(2) + "×",
@@ -628,8 +645,8 @@ function pipeline(s) {
   const set = (id, t, cls) => { $(id).textContent = t; $(id).className = "v" + (cls ? " " + cls : ""); };
   set("pPayload", c.source === "text" ? `TEXT · ${s.message_bytes} B` : `IMAGE · ${c.image_size}×${c.image_size}${c.gray ? " gray" : ""}`);
   set("pPack", `${s.n_packets} × ≤${c.max_payload} B + CRC-16`);
-  set("pMod", MODNAME[c.mod]);
-  set("pChan", `${s.channel_desc} · ${c.snr_db.toFixed(1)} dB · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
+  set("pMod", c.adaptive ? `AUTO → ${MODNAME[s.amc.next]}` : MODNAME[c.mod]);
+  set("pChan", `${s.channel_desc} · ${s.snr_now_db.toFixed(1)} dB${c.snr_swing_db ? " (swing ±" + c.snr_swing_db + ")" : ""} · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
   if (!L) { for (const id of ["pSync", "pEq", "pDem", "pCrc"]) set(id, "–"); }
   else {
     const det = L.sync_metric >= SYNC_THRESHOLD;
@@ -708,7 +725,8 @@ function render() {
   $("runTag").textContent = s.running ? "RUN" : "STOP";
   $("goLed").className = "led" + (s.running ? " on" : "");
   $("goTxt").textContent = s.running ? "Pause" : s.done ? "Rerun" : "Run";
-  $("cMod").textContent = MODNAME[c.mod];
+  $("cMod").textContent = MODNAME[L ? L.mod : c.mod] + (c.adaptive ? " · AUTO" : "");
+  $("amcNext").textContent = c.adaptive ? "next: " + MODNAME[s.amc.next] : "";
   logPackets(s); telemetry(s); pipeline(s); payload(s); table(s);
   if (s.sent !== lastSent) {
     if (s.sent < lastSent || s.sent === 0) { persist = []; prevPsd = curPsd = null; }

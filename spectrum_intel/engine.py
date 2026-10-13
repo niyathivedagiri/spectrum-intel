@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from spectrum_intel import channel as chm
+from spectrum_intel.adaptation import POLICIES, LinkAdapter
 from spectrum_intel import metrics as m
 from spectrum_intel import payload as pl
 from spectrum_intel.link import PacketRecord, transfer_packet
@@ -41,7 +42,8 @@ DEFAULT_TEXT = (
 CHANNEL_FIELDS = ("fading", "k_factor_db", "doppler_hz", "multipath", "delay_spread_us", "echo_db",
                   "jammer", "sir_db", "jam_offset_khz", "duty")
 RECEIVER_FIELDS = ("equalizer", "eq_taps", "pilot_window")
-LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps", *CHANNEL_FIELDS, *RECEIVER_FIELDS}  # change between packets
+AMC_FIELDS = ("adaptive", "amc_policy", "target_per", "snr_swing_db", "swing_period")
+LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps", *CHANNEL_FIELDS, *RECEIVER_FIELDS, *AMC_FIELDS}
 RESET_FIELDS = {"source", "text", "image_size", "gray", "seed", "max_payload"}  # need a restart
 MAX_TEXT_CHARS = 4000
 MAX_IMAGE_SIZE = 128
@@ -76,12 +78,20 @@ class EngineConfig:
     equalizer: str = "none"         # "none" or "ls" (preamble-trained, for multipath)
     eq_taps: int = 7
     pilot_window: int = 7           # pilots averaged per channel estimate
+    # link adaptation (adaptation.LinkAdapter) and a slowly swinging SNR to exercise it
+    adaptive: bool = False          # True: the modulation is chosen per packet from receiver feedback
+    amc_policy: str = "olla"        # "threshold" (table only) or "olla" (table + learned offset)
+    target_per: float = 0.1         # packet error rate the adaptation aims for
+    snr_swing_db: float = 0.0       # SNR moves as snr_db + swing * sin(2 pi k / swing_period), k = packet index
+    swing_period: int = 60
 
     def validated(self) -> "EngineConfig":
         if self.source not in ("text", "image"):
             raise ValueError("source must be 'text' or 'image'")
         if self.mod not in LINK_MODULATIONS:
             raise ValueError(f"mod must be one of {LINK_MODULATIONS}")
+        if self.amc_policy not in POLICIES:
+            raise ValueError(f"amc_policy must be one of {POLICIES}")
         if self.equalizer not in ("none", "ls"):
             raise ValueError("equalizer must be 'none' or 'ls'")
         self.channel()                                   # checks fading / multipath / jammer names
@@ -101,7 +111,10 @@ class EngineConfig:
                        jam_offset_khz=float(np.clip(self.jam_offset_khz, -400, 400)),
                        duty=float(np.clip(self.duty, 0.01, 1.0)),
                        eq_taps=int(np.clip(self.eq_taps, 1, 41)) | 1,          # odd
-                       pilot_window=int(np.clip(self.pilot_window, 1, 15)))
+                       pilot_window=int(np.clip(self.pilot_window, 1, 15)),
+                       adaptive=bool(self.adaptive), target_per=float(np.clip(self.target_per, 0.01, 0.5)),
+                       snr_swing_db=float(np.clip(self.snr_swing_db, 0, 20)),
+                       swing_period=int(np.clip(self.swing_period, 4, 2000)))
 
     def channel(self) -> chm.ChannelConfig:
         """The channel impairments as a ChannelConfig (raises ValueError on an unknown model)."""
@@ -186,6 +199,7 @@ class LinkEngine:
         self.snr_set: list[float] = []
         self.process_ms: list[float] = []
         self._good, self._rough = {}, {}
+        self.adapter = LinkAdapter(c.amc_policy, c.target_per)
         self.last: StepView | None = None
         self.started = time.time()
 
@@ -216,8 +230,17 @@ class LinkEngine:
         if restart:
             self.reset(new)
         else:
+            if (new.amc_policy, new.target_per) != (self.config.amc_policy, self.config.target_per):
+                fb = self.adapter.snr_fb                       # keep the latest feedback, restart the loop
+                self.adapter = LinkAdapter(new.amc_policy, new.target_per)
+                self.adapter.snr_fb = fb
             self.config = new
         return restart
+
+    def snr_for(self, k: int) -> float:
+        """SNR used for packet k (the set SNR, plus the optional slow swing)."""
+        c = self.config
+        return c.snr_db + c.snr_swing_db * float(np.sin(2 * np.pi * k / c.swing_period)) if c.snr_swing_db else c.snr_db
 
     # ---------------------------------------------------------------- running
     @property
@@ -233,9 +256,12 @@ class LinkEngine:
         if self.done:
             return None
         c = self.config
-        pkt = self.packets[len(self.records)]
+        k = len(self.records)
+        pkt = self.packets[k]
+        snr = self.snr_for(k)
+        mod = self.adapter.choose() if c.adaptive else c.mod      # adaptation only knows past feedback
         t0 = time.perf_counter()
-        t = transfer_packet(pkt, self.n_packets, c.mod, c.snr_db, self.rng, max_payload=c.max_payload,
+        t = transfer_packet(pkt, self.n_packets, mod, snr, self.rng, max_payload=c.max_payload,
                             cfo=c.cfo, keep_corrupted=c.tolerant, channel=c.channel(),
                             equalizer=c.equalizer, eq_taps=c.eq_taps, pilot_window=c.pilot_window,
                             sample_rate_hz=c.sample_rate_hz)
@@ -245,11 +271,12 @@ class LinkEngine:
         if t.rough is not None:
             self._rough.setdefault(t.rough.seq, t.rough)      # first damaged copy wins, as in link.send
         outcome = "ok" if t.good is not None else ("damaged" if t.rough is not None else "lost")
+        self.adapter.update(t.record)                           # feedback for the next packet
         self.records.append(t.record)
         self.outcomes.append(outcome)
-        self.snr_set.append(c.snr_db)
+        self.snr_set.append(snr)
         self.process_ms.append(proc_ms)
-        self.last = self._view(pkt.seq, t, outcome, proc_ms)
+        self.last = self._view(pkt.seq, t, outcome, proc_ms, snr)
         return self.last
 
     def run_to_end(self):
@@ -257,7 +284,7 @@ class LinkEngine:
             pass
         return self
 
-    def _view(self, seq, t, outcome, proc_ms) -> StepView:
+    def _view(self, seq, t, outcome, proc_ms, snr) -> StepView:
         res, rx = t.res, t.rx
         const = res.data_symbols[HEADER_BITS:] if res.header_ok and res.data_symbols is not None else np.array([])
         p = _psd(rx)
@@ -286,7 +313,7 @@ class LinkEngine:
                         psd_freq_khz=freq, psd_db=10 * np.log10(p + 1e-12),
                         wave_i=seg.real, wave_q=seg.imag, wave_start=w0,
                         frame_start=res.start if res.detected else -1, sync_metric=float(res.sync_metric),
-                        snr_set_db=self.config.snr_db, process_ms=proc_ms,
+                        snr_set_db=snr, process_ms=proc_ms,
                         airtime_ms=1e3 * t.record.n_samples / fs, outcome=outcome)
 
     # ---------------------------------------------------------------- results so far
@@ -347,7 +374,9 @@ class LinkEngine:
         out = {"config": asdict(c), "channel_desc": c.channel().describe(), "n_packets": self.n_packets, "sent": len(self.records), "done": self.done,
                "message_bytes": len(self.data), "payload": self.payload_view(),
                "report": _clean(self.report()), "report_recent": _clean(self.report(last=20)),
-               "ideal": [[float(z.real), float(z.imag)] for z in constellation(c.mod)]}
+               "ideal": [[float(z.real), float(z.imag)] for z in constellation(self.records[-1].mod if self.records else c.mod)],
+               "amc": self.adapter.summary() | {"enabled": c.adaptive},
+               "snr_now_db": round(self.snr_for(len(self.records)), 3)}
         recs = self.records[-history:]
         off = len(self.records) - len(recs)
         out["history"] = [{"i": off + j, "seq": r.seq, "mod": r.mod, "snr_set": self.snr_set[off + j],
