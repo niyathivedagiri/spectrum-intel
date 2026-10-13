@@ -1,0 +1,4 @@
+part,packet_bytes,success
+pulsed_vs_size,16,0.9625
+pulsed_vs_size,64,0.8
+pulsed_vs_size,256,0.55

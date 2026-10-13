@@ -1,0 +1,15 @@
+{
+  "experiment": "channel",
+  "seed": 5,
+  "created": "20261012-080147",
+  "config": {
+    "packets_per_point": 80,
+    "modulation": "qpsk",
+    "packet_bytes": 64,
+    "sample_rate_hz": 1000000.0
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}

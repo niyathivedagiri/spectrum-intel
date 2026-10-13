@@ -1,0 +1,13 @@
+part,packet_bytes,doppler_hz,success
+time_varying_multipath,16,0,0.9625
+time_varying_multipath,16,50,0.6625
+time_varying_multipath,16,100,0.425
+time_varying_multipath,16,200,0.1625
+time_varying_multipath,16,300,0.0375
+time_varying_multipath,16,500,0.025
+time_varying_multipath,64,0,0.975
+time_varying_multipath,64,50,0.3625
+time_varying_multipath,64,100,0.175
+time_varying_multipath,64,200,0.0125
+time_varying_multipath,64,300,0.0125
+time_varying_multipath,64,500,0.0

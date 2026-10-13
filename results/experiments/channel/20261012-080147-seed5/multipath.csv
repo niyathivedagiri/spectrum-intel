@@ -1,0 +1,33 @@
+part,receiver,delay_us,success
+multipath,no equaliser,0,1.0
+multipath,no equaliser,2,0.7875
+multipath,no equaliser,4,0.4625
+multipath,no equaliser,8,0.0
+multipath,no equaliser,12,0.0
+multipath,no equaliser,16,0.0
+multipath,no equaliser,24,0.0
+multipath,no equaliser,32,0.0
+multipath,LS 7 taps,0,1.0
+multipath,LS 7 taps,2,1.0
+multipath,LS 7 taps,4,1.0
+multipath,LS 7 taps,8,1.0
+multipath,LS 7 taps,12,0.9625
+multipath,LS 7 taps,16,0.3875
+multipath,LS 7 taps,24,0.325
+multipath,LS 7 taps,32,0.0
+multipath,LS 15 taps,0,1.0
+multipath,LS 15 taps,2,1.0
+multipath,LS 15 taps,4,1.0
+multipath,LS 15 taps,8,1.0
+multipath,LS 15 taps,12,1.0
+multipath,LS 15 taps,16,1.0
+multipath,LS 15 taps,24,0.9
+multipath,LS 15 taps,32,0.05
+multipath,LS 21 taps,0,1.0
+multipath,LS 21 taps,2,1.0
+multipath,LS 21 taps,4,1.0
+multipath,LS 21 taps,8,1.0
+multipath,LS 21 taps,12,1.0
+multipath,LS 21 taps,16,1.0
+multipath,LS 21 taps,24,0.9875
+multipath,LS 21 taps,32,0.8

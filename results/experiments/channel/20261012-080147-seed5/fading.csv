@@ -1,0 +1,73 @@
+part,channel,snr_db,success
+fading,AWGN,-4.0,0.0
+fading,AWGN,-2.0,0.0
+fading,AWGN,0.0,0.1875
+fading,AWGN,2.0,0.7625
+fading,AWGN,4.0,0.975
+fading,AWGN,6.0,1.0
+fading,AWGN,8.0,1.0
+fading,AWGN,10.0,1.0
+fading,AWGN,12.0,1.0
+fading,AWGN,14.0,1.0
+fading,AWGN,16.0,1.0
+fading,AWGN,18.0,1.0
+fading,AWGN,20.0,1.0
+fading,AWGN,22.0,1.0
+fading,AWGN,24.0,1.0
+fading,AWGN,26.0,1.0
+fading,AWGN,28.0,1.0
+fading,AWGN,30.0,1.0
+fading,Rician K=10 dB,-4.0,0.0
+fading,Rician K=10 dB,-2.0,0.0375
+fading,Rician K=10 dB,0.0,0.25
+fading,Rician K=10 dB,2.0,0.575
+fading,Rician K=10 dB,4.0,0.9
+fading,Rician K=10 dB,6.0,0.9875
+fading,Rician K=10 dB,8.0,0.9875
+fading,Rician K=10 dB,10.0,1.0
+fading,Rician K=10 dB,12.0,1.0
+fading,Rician K=10 dB,14.0,1.0
+fading,Rician K=10 dB,16.0,1.0
+fading,Rician K=10 dB,18.0,1.0
+fading,Rician K=10 dB,20.0,1.0
+fading,Rician K=10 dB,22.0,1.0
+fading,Rician K=10 dB,24.0,1.0
+fading,Rician K=10 dB,26.0,1.0
+fading,Rician K=10 dB,28.0,1.0
+fading,Rician K=10 dB,30.0,1.0
+fading,Rician K=3 dB,-4.0,0.0375
+fading,Rician K=3 dB,-2.0,0.1375
+fading,Rician K=3 dB,0.0,0.2
+fading,Rician K=3 dB,2.0,0.5625
+fading,Rician K=3 dB,4.0,0.7375
+fading,Rician K=3 dB,6.0,0.825
+fading,Rician K=3 dB,8.0,0.875
+fading,Rician K=3 dB,10.0,0.925
+fading,Rician K=3 dB,12.0,0.95
+fading,Rician K=3 dB,14.0,1.0
+fading,Rician K=3 dB,16.0,1.0
+fading,Rician K=3 dB,18.0,1.0
+fading,Rician K=3 dB,20.0,1.0
+fading,Rician K=3 dB,22.0,0.975
+fading,Rician K=3 dB,24.0,1.0
+fading,Rician K=3 dB,26.0,1.0
+fading,Rician K=3 dB,28.0,1.0
+fading,Rician K=3 dB,30.0,1.0
+fading,Rayleigh,-4.0,0.0375
+fading,Rayleigh,-2.0,0.05
+fading,Rayleigh,0.0,0.3125
+fading,Rayleigh,2.0,0.5125
+fading,Rayleigh,4.0,0.6
+fading,Rayleigh,6.0,0.6125
+fading,Rayleigh,8.0,0.7875
+fading,Rayleigh,10.0,0.8625
+fading,Rayleigh,12.0,0.9
+fading,Rayleigh,14.0,0.9625
+fading,Rayleigh,16.0,0.9875
+fading,Rayleigh,18.0,0.975
+fading,Rayleigh,20.0,1.0
+fading,Rayleigh,22.0,1.0
+fading,Rayleigh,24.0,0.9875
+fading,Rayleigh,26.0,1.0
+fading,Rayleigh,28.0,1.0
+fading,Rayleigh,30.0,1.0
