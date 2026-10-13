@@ -16,6 +16,10 @@ Steps
     phase) every 17 symbols; it is interpolated linearly in between and
     divided out (one-tap equalisation).
  5. SNR estimate from the preamble residual (used later by adaptive control).
+ Optional (equalizer="ls"): before step 4, a short linear equaliser is fitted by least
+    squares so that it turns the received preamble back into the known preamble. It
+    undoes multipath echoes (intersymbol interference), which the one-tap pilot
+    correction cannot. Off by default.
  6. Header (BPSK) -> modulation + length; payload demapping -> bits -> bytes.
 """
 from __future__ import annotations
@@ -37,6 +41,7 @@ from spectrum_intel.transmitter import (BETA, HEADER_BITS, PILOT, PILOT_SPACING,
 DETECTION_THRESHOLD = 0.58
 SYNC_SEGMENTS = 7              # preamble split into 7 x 9 symbols for frequency-robust detection
 PILOT_WINDOW = 7               # pilots averaged when estimating the channel (noise vs tracking speed)
+EQ_TAPS = 7                    # optional preamble-trained equaliser: +-3 symbols of echo
 
 
 @dataclass
@@ -102,6 +107,35 @@ def _gain_track(stream: np.ndarray, n_data: int, window: int = PILOT_WINDOW):
     return stream[data_pos] / g, g
 
 
+def _apply_fir(sym: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """e[n] = sum_k w[k] * sym[n + k - c], c = centre tap (zeros outside the burst)."""
+    c = len(w) // 2
+    out = np.zeros(len(sym), complex)
+    for k, wk in enumerate(w):
+        j = k - c
+        if j >= 0:
+            out[:len(sym) - j] += wk * sym[j:]
+        else:
+            out[-j:] += wk * sym[:j]
+    return out
+
+
+def ls_equalizer(sym: np.ndarray, n_taps: int = EQ_TAPS, ridge: float = 1e-2) -> np.ndarray:
+    """Symbol-spaced FIR equaliser trained on the preamble (regularised least squares).
+
+    Finds w so that sum_k w[k] sym[n+k-c] ~= PREAMBLE[n]. Preamble symbols are known,
+    so this is data-aided: no decisions are needed. ridge keeps it stable when the
+    channel has a deep notch (the LS solution would otherwise amplify noise).
+    """
+    c = n_taps // 2
+    rows = np.arange(c, len(PREAMBLE))
+    A = np.stack([sym[rows + k - c] for k in range(n_taps)], axis=1)
+    target = PREAMBLE[rows]
+    R = A.conj().T @ A
+    lam = ridge * np.real(np.trace(R)) / n_taps
+    return np.linalg.solve(R + lam * np.eye(n_taps), A.conj().T @ target)
+
+
 def _sync(y: np.ndarray):
     """Segmented (non-coherent) preamble correlation.
 
@@ -124,15 +158,31 @@ def _sync(y: np.ndarray):
     energy = np.convolve(np.abs(y) ** 2, mask[::-1], mode="valid")[:len(total)]
     metric = total / np.sqrt(np.maximum(energy, 1e-12) * SYNC_SEGMENTS * seg)   # 1.0 = perfect match
     n0 = int(np.argmax(total))
+    if metric[n0] < DETECTION_THRESHOLD:
+        # The strongest raw peak can sit in the DATA when the preamble arrived in a fade and the
+        # signal grew stronger later in the frame (time-varying fading). The normalised metric is
+        # level-independent, so its best position is checked as well. This only changes bursts
+        # that would otherwise be rejected (AWGN results that passed before are unchanged).
+        n1 = int(np.argmax(metric))
+        if metric[n1] >= DETECTION_THRESHOLD:
+            return n1, float(metric[n1])
     return n0, float(metric[n0])
 
 
-def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004) -> RxResult:
+def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004,
+            equalizer: str = "none", eq_taps: int = EQ_TAPS, pilot_window: int = PILOT_WINDOW) -> RxResult:
     """Demodulate one burst.
 
     cfo_search: if > 0, also try coarse frequency offsets in [-cfo_search, +cfo_search]
     (cycles/sample, e.g. LEO Doppler) and keep the one with the strongest preamble.
+    equalizer: "none" (one-tap pilot correction only) or "ls" (preamble-trained FIR first).
+    eq_taps: equaliser length in symbols (odd). Longer handles longer echoes but is estimated
+    from the same 63 preamble symbols, so it adds more noise on a clean channel.
+    pilot_window: pilots averaged per gain estimate. Large = less noise (best for slowly
+    changing channels); small = follows fast fading (Doppler) but noisier.
     """
+    if equalizer not in ("none", "ls"):
+        raise ValueError("equalizer must be 'none' or 'ls'")
     coarse = 0.0
     if cfo_search > 0:
         best = (-1.0, 0.0)
@@ -159,6 +209,10 @@ def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004) ->
     # ---- 3. frequency offset from the preamble ------------------------------------
     dphi = _multi_lag_freq(pre * np.conj(PREAMBLE))              # rad per symbol
     sym = sym * np.exp(-1j * dphi * np.arange(n_avail))
+    eq_w = None
+    if equalizer == "ls" and n_avail > len(PREAMBLE) + eq_taps:
+        eq_w = ls_equalizer(sym, eq_taps)
+        sym = _apply_fir(sym, eq_w)
     pre = sym[:len(PREAMBLE)]
 
     # ---- 5. gain, phase and SNR from the preamble -----------------------------------
@@ -174,7 +228,7 @@ def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004) ->
     n_hdr = HEADER_BITS                                          # BPSK: 1 bit/symbol
     if len(stream) < stream_length(n_hdr):
         return res
-    hdr_syms, _ = _gain_track(stream, n_hdr)
+    hdr_syms, _ = _gain_track(stream, n_hdr, pilot_window)
     mod, n_bytes, ok = parse_header(demodulate(hdr_syms, "bpsk"))
     res.header_ok = ok
     if not ok:
@@ -190,11 +244,13 @@ def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004) ->
     stream = stream * np.exp(-1j * resid * np.arange(len(stream)))
     dphi += resid
     res.cfo_est = coarse + dphi / (2 * np.pi) / SPS
-    data, gains = _gain_track(stream, n_data)
+    data, gains = _gain_track(stream, n_data, pilot_window)
     bits = demodulate(data[n_hdr:], mod)[:n_bytes * 8]
     res.mod = mod
     res.payload_bits = bits
     res.payload = bits_to_bytes(bits)
     res.data_symbols = data
-    res.info = {"n_bytes": n_bytes, "n_payload_symbols": n_pay, "pilot_gain_mean": complex(np.mean(gains))}
+    res.info = {"n_bytes": n_bytes, "n_payload_symbols": n_pay, "pilot_gain_mean": complex(np.mean(gains)),
+                "gain_track": gains[::4],                    # receiver's view of the channel over the frame
+                "eq_taps": eq_w}
     return res
