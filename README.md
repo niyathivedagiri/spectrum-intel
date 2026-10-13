@@ -107,10 +107,41 @@ under the wrong slot (seed 1, QPSK, 1.5 dB: packet 1 is read as packet 9, so slo
 is only protected by the packet CRC, which tolerant mode ignores; protecting the header separately is a
 candidate for the error-correction phase. The dashboard is a single-user local tool, not a multi-user web app.
 
+**Phase 5 (done): dynamic channel.** Besides noise, the channel can now fade (Rayleigh, Rician with a line of sight,
+block or with Doppler), add echoes (two-ray or exponential delay spread) and add interference (a tone or a pulsed
+noise jammer). The receiver gained an optional preamble-trained least-squares equaliser and an adjustable pilot
+averaging window. Everything is switchable live in the dashboard, which also shows the true channel against the
+receiver's estimate. With every impairment off the link is bit-identical to before.
+
+| Measured (QPSK, 64-byte packets, 80 packets per point, same seeds for every receiver) | Result |
+|---|---|
+| SNR for 99% of packets: AWGN / Rician K=10 dB / Rician K=3 dB / Rayleigh | 5 / 8 / 14 / 19 dB |
+| Rayleigh vs the outage law exp(−10^((T−SNR)/10)), T = AWGN 50% point | within 0.11 at every SNR |
+| Two-ray echo (−3 dB) at 15 dB, longest echo with ≥ 90% success: none / LS 7 / LS 15 / LS 21 taps | under 2 µs / 12 µs / 24 µs / 24 µs (80% at 32 µs) |
+| Cost of the equaliser on a clean channel (AWGN 1 dB): none / LS 7 / LS 15 / LS 21 | 54% / 36% / 20% / 6% of packets pass |
+| Rayleigh at 25 dB, 1 kHz Doppler: averaging 7 / 3 / 1 pilots | 3% / 38% / 71% pass (but at AWGN 1 dB: 56% / 45% / 16%) |
+| SIR for 90% at SNR 15 dB: tone / pulsed (10% duty) jammer | 5 dB / 10.5 dB |
+| Pulsed jammer at SIR 10 dB: 16 / 64 / 256-byte packets | 96% / 80% / 55% pass |
+| Echo that also fades (8 µs, LS 15): 64-byte packets at 0 / 50 / 200 Hz Doppler | 97% / 36% / 1% |
+
+- **Receiver bug found by fading and fixed.** Frame sync took the position with the largest *raw* correlation.
+  When the preamble arrived in a fade and the rest of the frame was 13 dB stronger, random correlation with the
+  data beat the true preamble and the frame was missed even at 25 dB. Sync now also checks the best *normalised*
+  position when the raw peak fails the threshold. In AWGN nothing changes from −10 dB upward (2 extra detections in
+  300 frames at −12 and −14 dB, whose headers still fail); with Rayleigh fading at 50 Hz Doppler, success rose from
+  88% to 98.5%. A test reproduces the case.
+- **Trade-offs, not free wins.** Longer equalisers reach longer echoes but cost noise on clean channels; averaging
+  fewer pilots follows fast fading but costs noise on still channels. Choosing them from the measured channel is
+  the job of the adaptive phase.
+- **Known limitation.** The equaliser is trained once per frame on the preamble, so an echo that changes during
+  the frame defeats it (last row). Shorter packets help; real systems spread pilots through the whole frame
+  (OFDM pilots in LTE/5G) or adapt the equaliser continuously (LMS/RLS).
+
 ```bash
 python scripts/dashboard.py                                                    # opens http://127.0.0.1:8765
 python scripts/dashboard.py --source image --snr 3                            # the sample photo
 python scripts/exp_realtime.py                                                 # speed before/after (~20 s)
+python scripts/exp_channel.py                                                  # fading, multipath, jamming (~75 s)
 python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
@@ -149,11 +180,11 @@ spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupan
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
                   demo_image_link, exp_image_link, exp_link_metrics,
-                  dashboard, exp_realtime
+                  dashboard, exp_realtime, exp_channel
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
 docs/             dashboard screenshot
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            134 automated checks
+tests/            148 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -162,7 +193,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 134 checks
+python -m pytest                    # 148 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
