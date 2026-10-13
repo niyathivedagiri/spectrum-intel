@@ -137,11 +137,36 @@ receiver's estimate. With every impairment off the link is bit-identical to befo
   the frame defeats it (last row). Shorter packets help; real systems spread pilots through the whole frame
   (OFDM pilots in LTE/5G) or adapt the equaliser continuously (LMS/RLS).
 
+**Phase 6 (done): adaptive modulation.** The transmitter now chooses each packet's modulation from what the
+receiver reported about the previous packet (its SNR estimate and ACK/NACK), so its information is always one
+packet old, as in a real link. Decisions use a calibration table of packet error rate vs SNR measured with this
+very receiver (`scripts/calibrate_link_table.py`: 10% errors at −1.1 / 2.4 / 9.6 dB for BPSK / QPSK / 16-QAM).
+Three policies: **threshold** (fastest modulation within a 10% error target), **OLLA** (the same plus an
+outer loop that learns a correction from ACK/NACK, as LTE does) and **goodput** (highest expected delivered data).
+In the dashboard: Modulation → AUTO, plus an SNR swing to imitate a moving user.
+
+| Measured (64-byte packets; every policy sees the same channel draws) | Result |
+|---|---|
+| Steady SNR −2 to 20 dB: goodput policy vs the best fixed modulation at each SNR | 98% on average, never below 96% |
+| Moving user (SNR 8 ± 10 dB, 600 packets): goodput, kbps | BPSK 84 · QPSK 115 · 16-QAM 126 · threshold 138 · OLLA 130 · **goodput 142** (genie 137) |
+| Same run: packet error rate | 16-QAM 49% · goodput policy 8% · OLLA 10.5% |
+| Rayleigh fading, mean 10 dB, slow (Doppler × packet interval = 0.025) | best fixed 151 kbps → goodput policy 170 kbps (+13%) |
+| Same, fast (Doppler × interval ≥ 0.25: channel nearly new every packet) | goodput policy 119–123 kbps vs fixed QPSK 132–139: stale feedback is worse than none (genie: 145–154) |
+| Packet error rate across all fading speeds | OLLA 9–12% (target 10%); threshold rises to 27% |
+
+- **A 10% error target is not the same as maximum throughput.** At 2 dB QPSK fails 14% of packets yet delivers
+  140 kbps against BPSK's 89. LTE aims for 10% because it retransmits; without retransmission the goodput policy wins.
+- **Adaptation only helps when feedback is still true when it is used.** When the channel decorrelates between
+  packets (fast fading), choosing from the last report adds risk without information; a fixed robust choice, or
+  deciding from the average SNR, would be better. The genie shows what timely feedback would be worth.
+
 ```bash
 python scripts/dashboard.py                                                    # opens http://127.0.0.1:8765
 python scripts/dashboard.py --source image --snr 3                            # the sample photo
 python scripts/exp_realtime.py                                                 # speed before/after (~20 s)
 python scripts/exp_channel.py                                                  # fading, multipath, jamming (~75 s)
+python scripts/calibrate_link_table.py                                         # PER-vs-SNR table for adaptation (~90 s)
+python scripts/exp_adaptation.py                                               # adaptive vs fixed modulation (~3 min)
 python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
@@ -176,15 +201,15 @@ The original validated numbers are frozen in `results/validated/metrics_v1.json`
 ```
 spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupancy, leo, plots
                   payload, coding, packet, modulation, transmitter, channel, receiver, link,
-                  metrics, experiments, engine, dashboard (+ web/dashboard.html)   (communication link)
+                  metrics, experiments, engine, dashboard (+ web/dashboard.html), adaptation (+ link_table.json)   (communication link)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
                   demo_image_link, exp_image_link, exp_link_metrics,
-                  dashboard, exp_realtime, exp_channel
+                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
 docs/             dashboard screenshot
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            148 automated checks
+tests/            159 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -193,7 +218,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 148 checks
+python -m pytest                    # 159 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
