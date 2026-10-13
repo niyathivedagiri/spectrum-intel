@@ -1,0 +1,39 @@
+{
+  "experiment": "link_table",
+  "seed": 21,
+  "created": "20261013-051536",
+  "config": {
+    "packets_per_point": 200,
+    "packet_bytes": 64,
+    "snr_db": [
+      -6.0,
+      -5.0,
+      -4.0,
+      -3.0,
+      -2.0,
+      -1.0,
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      10.0,
+      11.0,
+      12.0,
+      13.0,
+      14.0,
+      15.0,
+      16.0
+    ],
+    "channel": "AWGN, random phase and timing"
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}
