@@ -1,0 +1,15 @@
+{
+  "experiment": "adaptation",
+  "seed": 6,
+  "created": "20261013-052156",
+  "config": {
+    "packet_bytes": 64,
+    "target_per": 0.1,
+    "feedback_delay_packets": 1,
+    "table": "spectrum_intel/link_table.json"
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}
