@@ -69,11 +69,14 @@ class PacketTransfer:
     res: object                 # RxResult
     good: Packet | None         # packet that passed the CRC
     rough: Packet | None        # damaged packet kept in error-tolerant mode
+    chan: object = None         # ChannelInfo: what the channel really did (ground truth, for display/checks)
 
 
 def transfer_packet(pkt: Packet, n_packets: int, mod: str, snr_db: float, rng: np.random.Generator, *,
                     max_payload: int = 64, cfo: float = 0.0, cfo_search: float = 0.0,
-                    keep_corrupted: bool = False) -> PacketTransfer:
+                    keep_corrupted: bool = False, channel: "ch.ChannelConfig | None" = None,
+                    equalizer: str = "none", eq_taps: int = 7, pilot_window: int = 7,
+                    sample_rate_hz: float = 1e6) -> PacketTransfer:
     """Send ONE packet through transmitter -> channel -> receiver and score it.
 
     Shared by `send` (whole messages) and the real-time engine (one packet per step),
@@ -81,8 +84,8 @@ def transfer_packet(pkt: Packet, n_packets: int, mod: str, snr_db: float, rng: n
     """
     block = pkt.to_bytes()
     frame = build_frame(block, mod)
-    rx, _ = ch.awgn_link(frame.iq, snr_db, rng, cfo=cfo)
-    res = receive(rx, cfo_search=cfo_search)
+    rx, chan = ch.dynamic_link(frame.iq, snr_db, rng, channel, cfo=cfo, fs=sample_rate_hz)
+    res = receive(rx, cfo_search=cfo_search, equalizer=equalizer, eq_taps=eq_taps, pilot_window=pilot_window)
     crc_ok, errs, sym_err, good, rough = False, None, None, None, None
     tx_bits = bytes_to_bits(block)
     if res.header_ok:
@@ -98,24 +101,30 @@ def transfer_packet(pkt: Packet, n_packets: int, mod: str, snr_db: float, rng: n
                           rough is not None, errs, res.snr_est_db, res.cfo_est, len(frame.iq),
                           data_bytes=len(pkt.data), symbol_errors=sym_err,
                           n_symbols=frame.n_payload_symbols)
-    return PacketTransfer(record, frame, rx, res, good, rough)
+    return PacketTransfer(record, frame, rx, res, good, rough, chan)
 
 
 def send(data: bytes, mod: str, snr_db: float, rng: np.random.Generator, *,
          max_payload: int = 64, cfo: float = 0.0, cfo_search: float = 0.0,
-         keep_frames: bool = False, keep_corrupted: bool = False, fill: int = 0x00) -> LinkResult:
+         keep_frames: bool = False, keep_corrupted: bool = False, fill: int = 0x00,
+         channel: "ch.ChannelConfig | None" = None, equalizer: str = "none", eq_taps: int = 7,
+         pilot_window: int = 7) -> LinkResult:
     """Send data over an AWGN link with random phase/timing (and optional frequency offset).
 
     keep_corrupted=False (default): packets failing the CRC are dropped (missing).
     keep_corrupted=True: error-tolerant mode for media - a packet failing the CRC is
     still used if its header fields are self-consistent, and is listed in `corrupted`.
     fill: byte value used for missing packets (e.g. 128 = mid-grey for images).
+    channel: fading / multipath / interference (channel.ChannelConfig); None = AWGN only.
+    equalizer: receiver option, "none" or "ls" (preamble-trained, for multipath).
+    pilot_window: pilots averaged per channel estimate (small = follows fast fading, large = less noise).
     """
     packets = segment(data, max_payload)
     records, good, frames, corrupted, rough_pkts = [], [], [], [], []
     for pkt in packets:
         t = transfer_packet(pkt, len(packets), mod, snr_db, rng, max_payload=max_payload,
-                            cfo=cfo, cfo_search=cfo_search, keep_corrupted=keep_corrupted)
+                            cfo=cfo, cfo_search=cfo_search, keep_corrupted=keep_corrupted,
+                            channel=channel, equalizer=equalizer, eq_taps=eq_taps, pilot_window=pilot_window)
         records.append(t.record)
         if t.good is not None:
             good.append(t.good)

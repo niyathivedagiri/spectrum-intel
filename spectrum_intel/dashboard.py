@@ -55,7 +55,8 @@ class DashboardApp:
             t0 = time.perf_counter()
             with self.lock:
                 if self.running:
-                    if self.engine.step() is None:
+                    self.engine.step()
+                    if self.engine.done:              # stop as soon as the last packet is sent
                         self.running = False
                 period = 1.0 / self.engine.config.rate_pps
             time.sleep(max(0.005, period - (time.perf_counter() - t0)) if self.running else 0.05)

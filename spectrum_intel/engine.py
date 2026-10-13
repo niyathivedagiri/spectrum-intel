@@ -21,13 +21,14 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from spectrum_intel import channel as chm
 from spectrum_intel import metrics as m
 from spectrum_intel import payload as pl
 from spectrum_intel.link import PacketRecord, transfer_packet
 from spectrum_intel.modulation import LINK_MODULATIONS
 from spectrum_intel.packet import reassemble, segment
 from spectrum_intel.signals import constellation
-from spectrum_intel.transmitter import HEADER_BITS, SPS
+from spectrum_intel.transmitter import HEADER_BITS, PILOT_SPACING, PREAMBLE, SPAN, SPS
 
 DEFAULT_TEXT = (
     "Hello from the cognitive radio! This message is cut into packets of 64 bytes. Each packet gets a "
@@ -37,7 +38,10 @@ DEFAULT_TEXT = (
     "pilots, decides each symbol and checks the CRC. Green text passed the check. Orange text arrived "
     "damaged but was kept. Red dots mark packets that were lost. Turn the SNR down and watch the "
     "constellation spread out and the errors appear; switch to 16-QAM and see how much more signal it needs.")
-LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps"}          # may change between packets
+CHANNEL_FIELDS = ("fading", "k_factor_db", "doppler_hz", "multipath", "delay_spread_us", "echo_db",
+                  "jammer", "sir_db", "jam_offset_khz", "duty")
+RECEIVER_FIELDS = ("equalizer", "eq_taps", "pilot_window")
+LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps", *CHANNEL_FIELDS, *RECEIVER_FIELDS}  # change between packets
 RESET_FIELDS = {"source", "text", "image_size", "gray", "seed", "max_payload"}  # need a restart
 MAX_TEXT_CHARS = 4000
 MAX_IMAGE_SIZE = 128
@@ -57,12 +61,30 @@ class EngineConfig:
     max_payload: int = 64
     rate_pps: float = 8.0           # display pace, packets per second (server only)
     sample_rate_hz: float = m.DEFAULT_SAMPLE_RATE_HZ
+    # channel impairments beyond AWGN (see channel.ChannelConfig); defaults = plain AWGN
+    fading: str = "none"
+    k_factor_db: float = 6.0
+    doppler_hz: float = 0.0
+    multipath: str = "none"
+    delay_spread_us: float = 4.0
+    echo_db: float = -3.0
+    jammer: str = "none"
+    sir_db: float = 10.0
+    jam_offset_khz: float = 20.0
+    duty: float = 0.1
+    # receiver options
+    equalizer: str = "none"         # "none" or "ls" (preamble-trained, for multipath)
+    eq_taps: int = 7
+    pilot_window: int = 7           # pilots averaged per channel estimate
 
     def validated(self) -> "EngineConfig":
         if self.source not in ("text", "image"):
             raise ValueError("source must be 'text' or 'image'")
         if self.mod not in LINK_MODULATIONS:
             raise ValueError(f"mod must be one of {LINK_MODULATIONS}")
+        if self.equalizer not in ("none", "ls"):
+            raise ValueError("equalizer must be 'none' or 'ls'")
+        self.channel()                                   # checks fading / multipath / jammer names
         return replace(self,
                        text=str(self.text)[:MAX_TEXT_CHARS] or " ",
                        image_size=int(np.clip(self.image_size, 8, MAX_IMAGE_SIZE)),
@@ -70,7 +92,20 @@ class EngineConfig:
                        cfo=float(np.clip(self.cfo, -0.02, 0.02)),
                        seed=int(self.seed), max_payload=int(np.clip(self.max_payload, 8, 1024)),
                        rate_pps=float(np.clip(self.rate_pps, 0.2, 200)),
-                       tolerant=bool(self.tolerant), gray=bool(self.gray))
+                       tolerant=bool(self.tolerant), gray=bool(self.gray),
+                       k_factor_db=float(np.clip(self.k_factor_db, -10, 30)),
+                       doppler_hz=float(np.clip(self.doppler_hz, 0, 5000)),
+                       delay_spread_us=float(np.clip(self.delay_spread_us, 0, 64)),
+                       echo_db=float(np.clip(self.echo_db, -30, 0)),
+                       sir_db=float(np.clip(self.sir_db, -20, 60)),
+                       jam_offset_khz=float(np.clip(self.jam_offset_khz, -400, 400)),
+                       duty=float(np.clip(self.duty, 0.01, 1.0)),
+                       eq_taps=int(np.clip(self.eq_taps, 1, 41)) | 1,          # odd
+                       pilot_window=int(np.clip(self.pilot_window, 1, 15)))
+
+    def channel(self) -> chm.ChannelConfig:
+        """The channel impairments as a ChannelConfig (raises ValueError on an unknown model)."""
+        return chm.ChannelConfig(**{k: getattr(self, k) for k in CHANNEL_FIELDS})
 
 
 @dataclass
@@ -90,6 +125,16 @@ class StepView:
     process_ms: float
     airtime_ms: float
     outcome: str                    # "ok", "damaged" (kept), "lost"
+    chan_t_ms: np.ndarray = None    # time in the frame (ms) for the true channel gain
+    chan_true_db: np.ndarray = None # |direct-path gain| over the frame, dB re its RMS (ground truth)
+    est_t_ms: np.ndarray = None     # same time axis for the receiver's pilot-based estimate
+    est_db: np.ndarray = None       # |receiver's gain estimate|, dB re its RMS (None if header lost)
+    eq_taps: np.ndarray = None      # |LS equaliser taps| if the equaliser ran
+
+
+def _rel_db(g: np.ndarray) -> np.ndarray:
+    a = np.abs(g)
+    return 20 * np.log10(np.maximum(a, 1e-6) / max(np.sqrt(np.mean(a ** 2)), 1e-12))
 
 
 def _psd(x: np.ndarray, nfft: int = 256) -> np.ndarray:
@@ -191,7 +236,9 @@ class LinkEngine:
         pkt = self.packets[len(self.records)]
         t0 = time.perf_counter()
         t = transfer_packet(pkt, self.n_packets, c.mod, c.snr_db, self.rng, max_payload=c.max_payload,
-                            cfo=c.cfo, keep_corrupted=c.tolerant)
+                            cfo=c.cfo, keep_corrupted=c.tolerant, channel=c.channel(),
+                            equalizer=c.equalizer, eq_taps=c.eq_taps, pilot_window=c.pilot_window,
+                            sample_rate_hz=c.sample_rate_hz)
         proc_ms = 1e3 * (time.perf_counter() - t0)
         if t.good is not None:
             self._good[t.good.seq] = t.good
@@ -219,7 +266,23 @@ class LinkEngine:
         start = res.start if res.detected and res.start >= 0 else 0
         w0 = max(0, start - 16 * SPS)
         seg = rx[w0:w0 + 96 * SPS]
+        # channel over the frame: ground truth (direct path) vs the receiver's pilot-based estimate
+        g_true = getattr(t.chan, "gain", None)
+        if g_true is None:
+            g_true = np.ones(len(t.frame.iq), complex)          # plain AWGN: flat channel
+        dec = max(1, len(g_true) // 240)
+        ct = np.arange(0, len(g_true), dec)
+        info = res.info or {}
+        est_t = est = None
+        if info.get("gain_track") is not None:
+            j = np.arange(len(info["gain_track"])) * 4               # data-symbol index (gains[::4])
+            sym_pos = len(PREAMBLE) + 1 + j * (PILOT_SPACING + 1) / PILOT_SPACING
+            est_t = 1e3 * (sym_pos * SPS + SPAN * SPS // 2) / fs
+            est = _rel_db(np.asarray(info["gain_track"]))
+        eqw = info.get("eq_taps")
         return StepView(seq=seq, record=t.record, constellation=const[:800],
+                        chan_t_ms=1e3 * ct / fs, chan_true_db=_rel_db(g_true)[ct], est_t_ms=est_t, est_db=est,
+                        eq_taps=None if eqw is None else np.abs(eqw),
                         psd_freq_khz=freq, psd_db=10 * np.log10(p + 1e-12),
                         wave_i=seg.real, wave_q=seg.imag, wave_start=w0,
                         frame_start=res.start if res.detected else -1, sync_metric=float(res.sync_metric),
@@ -281,7 +344,7 @@ class LinkEngine:
     def state(self, history: int = 300) -> dict:
         """JSON-ready snapshot for the dashboard."""
         c = self.config
-        out = {"config": asdict(c), "n_packets": self.n_packets, "sent": len(self.records), "done": self.done,
+        out = {"config": asdict(c), "channel_desc": c.channel().describe(), "n_packets": self.n_packets, "sent": len(self.records), "done": self.done,
                "message_bytes": len(self.data), "payload": self.payload_view(),
                "report": _clean(self.report()), "report_recent": _clean(self.report(last=20)),
                "ideal": [[float(z.real), float(z.imag)] for z in constellation(c.mod)]}
@@ -304,6 +367,11 @@ class LinkEngine:
                            "constellation": np.round(np.c_[v.constellation.real, v.constellation.imag], 4).tolist(),
                            "psd": {"f_khz": np.round(v.psd_freq_khz, 2).tolist(),
                                    "db": np.round(v.psd_db, 2).tolist()},
+                           "chan": {"t_ms": np.round(v.chan_t_ms, 4).tolist(),
+                                    "true_db": np.round(np.maximum(v.chan_true_db, -40), 2).tolist(),
+                                    "est_t_ms": None if v.est_t_ms is None else np.round(v.est_t_ms, 4).tolist(),
+                                    "est_db": None if v.est_db is None else np.round(np.maximum(v.est_db, -40), 2).tolist(),
+                                    "eq_taps": None if v.eq_taps is None else np.round(v.eq_taps, 4).tolist()},
                            "wave": {"i": np.round(v.wave_i[::dec], 4).tolist(),
                                     "q": np.round(v.wave_q[::dec], 4).tolist(),
                                     "start": v.wave_start, "step": dec, "frame_start": v.frame_start}}

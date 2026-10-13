@@ -110,7 +110,7 @@
   .tele .big .v { font-size: 13px; letter-spacing: .8px; }
   .v.ok { color: var(--ok); } .v.warn { color: var(--warn); } .v.err { color: var(--err); } .v.sig { color: var(--sig); }
   .right { display: grid; gap: 10px; align-content: start; }
-  #events { height: 400px; overflow-y: auto; font: 10.5px/1.5 var(--mono); padding: 6px 10px; }
+  #events { height: 250px; overflow-y: auto; font: 10.5px/1.5 var(--mono); padding: 6px 10px; }
   #events div { display: grid; grid-template-columns: 58px 1fr; gap: 6px; color: var(--ink2); }
   #events time { color: var(--dim); }
   #events .ok { color: var(--ok); } #events .warn { color: var(--warn); } #events .err { color: var(--err); } #events .cfg { color: var(--sig); }
@@ -216,11 +216,34 @@
     </div>
 
     <div class="sec">
-      <div class="lbl">Channel <span class="chip">AWGN</span></div>
+      <div class="lbl">Channel <span class="chip" id="chChip">AWGN</span></div>
       <div class="lbl" style="margin-top:8px">Frequency offset <span class="mono" id="cfoV"></span></div>
       <div class="fader"><input type="range" id="cfo" min="0" max="4" step="0.25"><div class="ticks"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span></div></div>
+      <div class="lbl" style="margin-top:6px">Fading</div>
+      <div class="sel" id="fading"><button data-v="none">NONE</button><button data-v="rayleigh">RAYLEIGH</button><button data-v="rician">RICIAN</button></div>
+      <div id="kRow"><div class="lbl" style="margin-top:10px">Rician K (LOS ÷ scatter) <span class="mono" id="kfV"></span></div>
+        <div class="fader"><input type="range" id="kf" min="0" max="20" step="1"><div class="ticks"><span>0</span><span>5</span><span>10</span><span>15</span><span>20</span></div></div></div>
+      <div id="dopRow"><div class="lbl" style="margin-top:10px">Doppler spread <span class="mono" id="dopV"></span></div>
+        <div class="fader"><input type="range" id="dop" min="0" max="2000" step="25"><div class="ticks"><span>0</span><span>500</span><span>1k</span><span>1.5k</span><span>2k</span></div></div></div>
+      <div class="lbl" style="margin-top:6px">Multipath</div>
+      <div class="sel" id="multipath"><button data-v="none">NONE</button><button data-v="two_ray">TWO-RAY</button><button data-v="exponential">EXP</button></div>
+      <div id="dlyRow"><div class="lbl" style="margin-top:10px">Delay spread <span class="mono" id="dlyV"></span></div>
+        <div class="fader"><input type="range" id="dly" min="1" max="32" step="1"><div class="ticks"><span>1</span><span>8</span><span>16</span><span>24</span><span>32</span></div></div></div>
+      <div class="lbl" style="margin-top:6px">Interference</div>
+      <div class="sel" id="jammer"><button data-v="none">NONE</button><button data-v="tone">TONE</button><button data-v="pulsed">PULSED</button></div>
+      <div id="sirRow"><div class="lbl" style="margin-top:10px">Signal ÷ interference <span class="mono" id="sirV"></span></div>
+        <div class="fader"><input type="range" id="sir" min="-10" max="30" step="1"><div class="ticks"><span>-10</span><span>0</span><span>10</span><span>20</span><span>30</span></div></div></div>
+      <div class="hint">Fading and multipath keep the same average SNR; fades make the instantaneous SNR swing around it.</div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">Receiver</div>
+      <div class="lbl" style="margin-top:4px">Equaliser (preamble-trained)</div>
+      <div class="sel" id="eq"><button data-v="none">OFF</button><button data-v="ls7">LS·7</button><button data-v="ls15">LS·15</button><button data-v="ls21">LS·21</button></div>
+      <div class="lbl" style="margin-top:10px">Pilot averaging</div>
+      <div class="sel" id="pw"><button data-v="1">1</button><button data-v="3">3</button><button data-v="7">7</button></div>
       <label class="sw"><input type="checkbox" id="tolerant"><i></i>Keep damaged packets</label>
-      <div class="hint">Modulation, SNR, offset and damaged-packet policy apply from the next packet.</div>
+      <div class="hint">All radio, channel and receiver settings apply from the next packet.</div>
     </div>
   </aside>
 
@@ -293,6 +316,11 @@
       <div class="row"><span class="k">CPU ÷ airtime</span><span class="v" id="vRt">–</span></div>
     </div>
     <div class="panel">
+      <div class="ph"><h3>Channel tracking</h3><span class="tag" id="chTag">dB · ms</span></div>
+      <canvas id="cChan" height="132"></canvas>
+      <div class="readout"><span><b style="color:var(--muted)">━ true</b></span><span><b style="color:var(--sig)">━ RX estimate</b></span><span>EQ <b id="rEq">off</b></span></div>
+    </div>
+    <div class="panel">
       <div class="ph"><h3>Event log</h3><span class="tag">LOCAL TIME</span></div>
       <div id="events"></div>
     </div>
@@ -333,16 +361,30 @@ $("gray").onchange = e => control("update", {gray: e.target.checked});
 $("tolerant").onchange = e => control("update", {tolerant: e.target.checked});
 $("seed").onchange = e => control("update", {seed: +e.target.value});
 $("applyText").onclick = () => control("update", {text: $("text").value, source: "text"}).then(() => control("reset"));
-const labels = {snr: v => (+v).toFixed(1) + " dB", cfo: v => (+v).toFixed(2) + " kHz", rate: v => v + " pkt/s"};
+// every fader: config key, how to show it, and how slider value <-> config value convert
+const SLIDERS = {
+  snr:  {key: "snr_db",          fmt: v => (+v).toFixed(1) + " dB",  from: c => c.snr_db},
+  cfo:  {key: "cfo",             fmt: v => (+v).toFixed(2) + " kHz", from: c => c.cfo * c.sample_rate_hz / 1000, to: v => v * 1000 / S.config.sample_rate_hz},
+  rate: {key: "rate_pps",        fmt: v => v + " pkt/s",             from: c => Math.round(c.rate_pps)},
+  kf:   {key: "k_factor_db",     fmt: v => (+v).toFixed(0) + " dB",  from: c => c.k_factor_db},
+  dop:  {key: "doppler_hz",      fmt: v => (+v === 0 ? "0 Hz (block)" : v + " Hz"), from: c => c.doppler_hz},
+  dly:  {key: "delay_spread_us", fmt: v => v + " µs",               from: c => c.delay_spread_us},
+  sir:  {key: "sir_db",          fmt: v => (+v).toFixed(0) + " dB",  from: c => c.sir_db},
+};
 const editing = new Set();                                         // controls the operator is touching right now
-for (const id of ["snr", "cfo", "rate"]) {
-  $(id).addEventListener("input", e => { editing.add(id); $(id + "V").textContent = labels[id](e.target.value); });
+for (const [id, sl] of Object.entries(SLIDERS)) {
+  $(id).addEventListener("input", e => { editing.add(id); $(id + "V").textContent = sl.fmt(e.target.value); });
   $(id).addEventListener("change", async e => {
     const v = +e.target.value;
-    await control("update", id === "snr" ? {snr_db: v} : id === "cfo" ? {cfo: v * 1000 / S.config.sample_rate_hz} : {rate_pps: v});
+    await control("update", {[sl.key]: sl.to ? sl.to(v) : v});
     editing.delete(id);
   });
 }
+seg("fading", v => control("update", {fading: v}));
+seg("multipath", v => control("update", {multipath: v}));
+seg("jammer", v => control("update", {jammer: v}));
+seg("eq", v => control("update", v === "none" ? {equalizer: "none"} : {equalizer: "ls", eq_taps: +v.slice(2)}));
+seg("pw", v => control("update", {pilot_window: +v}));
 $("go").onclick = () => control(S && S.running ? "pause" : "start");
 $("step").onclick = () => control("step");
 $("reset").onclick = () => control("reset");
@@ -360,14 +402,23 @@ function fillControls(c, prev) {
   if (!prev || (prev.text !== c.text && document.activeElement !== $("text"))) $("text").value = c.text;
   $("gray").checked = c.gray; $("tolerant").checked = c.tolerant;
   if (document.activeElement !== $("seed")) $("seed").value = c.seed;
-  const val = {snr: c.snr_db, cfo: c.cfo * c.sample_rate_hz / 1000, rate: Math.round(c.rate_pps)};
-  for (const id of ["snr", "cfo", "rate"]) if (!editing.has(id)) { $(id).value = val[id]; $(id + "V").textContent = labels[id]($(id).value); }
+  for (const [id, sl] of Object.entries(SLIDERS)) if (!editing.has(id)) { $(id).value = sl.from(c); $(id + "V").textContent = sl.fmt($(id).value); }
+  setSeg("fading", c.fading); setSeg("multipath", c.multipath); setSeg("jammer", c.jammer);
+  setSeg("eq", c.equalizer === "none" ? "none" : "ls" + c.eq_taps); setSeg("pw", c.pilot_window);
+  $("kRow").classList.toggle("hidden", c.fading !== "rician");
+  $("dopRow").classList.toggle("hidden", c.fading === "none");
+  $("dlyRow").classList.toggle("hidden", c.multipath === "none");
+  $("sirRow").classList.toggle("hidden", c.jammer === "none");
   $("sizeV").textContent = c.image_size + "×" + c.image_size;
   if (prev) {                                                     // log operator changes
     if (prev.mod !== c.mod) event(`Modulation set → ${MODNAME[c.mod]}`, "cfg");
     if (prev.snr_db !== c.snr_db) event(`SNR set → ${c.snr_db.toFixed(1)} dB`, "cfg");
     if (prev.cfo !== c.cfo) event(`Frequency offset set → ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`, "cfg");
     if (prev.tolerant !== c.tolerant) event(`Damaged packets → ${c.tolerant ? "retained" : "dropped"}`, "cfg");
+    const CH = ["fading", "k_factor_db", "doppler_hz", "multipath", "delay_spread_us", "echo_db", "jammer", "sir_db", "jam_offset_khz", "duty"];
+    if (CH.some(k => prev[k] !== c[k])) event(`Channel → ${S.channel_desc}`, "cfg");
+    if (prev.equalizer !== c.equalizer || prev.eq_taps !== c.eq_taps || prev.pilot_window !== c.pilot_window)
+      event(`Receiver → equaliser ${c.equalizer === "none" ? "off" : "LS " + c.eq_taps + " taps"} · pilot averaging ${c.pilot_window}`, "cfg");
     if (prev.source !== c.source) event(`Payload → ${c.source.toUpperCase()}`, "cfg");
     if (prev.seed !== c.seed) event(`Seed → ${c.seed}`, "cfg");
   }
@@ -523,7 +574,29 @@ function drawWave(L) {
   g.globalAlpha = 1;
 }
 
+function drawChan(L) {
+  const [g, w, h] = ctx2d($("cChan")), x0 = 30, x1 = w - 8, y0 = 8, y1 = h - 18;
+  if (!L || !L.chan) { grid(g, x0, y0, x1, y1, [], [], null, null); empty(g, w, h, "no burst yet"); return; }
+  const C = L.chan, tmax = Math.max(...C.t_ms), lo = -30, hi = 10;
+  const X = t => x0 + t / tmax * (x1 - x0), Y = v => y0 + (hi - Math.max(lo, Math.min(hi, v))) / (hi - lo) * (y1 - y0);
+  grid(g, x0, y0, x1, y1, ticks(0, tmax, 3), [-30, -20, -10, 0, 10], X, Y, v => v, v => v);
+  g.strokeStyle = "rgba(185,192,202,.75)"; g.lineWidth = 1.4; g.beginPath();
+  C.true_db.forEach((v, i) => i ? g.lineTo(X(C.t_ms[i]), Y(v)) : g.moveTo(X(C.t_ms[i]), Y(v))); g.stroke();
+  if (C.est_db) {
+    g.fillStyle = css("--sig");
+    C.est_db.forEach((v, i) => g.fillRect(X(C.est_t_ms[i]) - 1.5, Y(v) - 1.5, 3, 3));
+  } else { g.fillStyle = css("--err"); g.textAlign = "left"; g.fillText("header lost · no estimate", x0 + 6, y0 + 12); }
+  $("rEq").textContent = C.eq_taps ? `LS · ${C.eq_taps.length} taps` : "off";
+}
+
 // ------------------------------------------------------------------ panels
+function chanShort(c) {
+  const parts = [];
+  if (c.fading !== "none") parts.push(c.fading.toUpperCase());
+  if (c.multipath !== "none") parts.push("MULTIPATH");
+  if (c.jammer !== "none") parts.push("JAMMED");
+  return parts.length ? parts.join(" + ") : "AWGN";
+}
 function setV(id, main, sub, cls) { const el = $(id); el.className = "v" + (cls ? " " + cls : ""); el.innerHTML = main + (sub === undefined ? "" : `<small>${sub}</small>`); }
 function rxStatus(s) {
   const L = s.last;
@@ -545,7 +618,8 @@ function telemetry(s) {
   setV("vLat", nil(R.latency_frame_ms) ? "–" : R.latency_frame_ms.toFixed(2) + " ms", "airtime");
   setV("vOh", pct(R.overhead_fraction));
   setV("vMod", MODNAME[c.mod], R.mod === "mixed" ? "run: mixed" : undefined, "sig");
-  setV("vCh", "AWGN", "Δf " + (c.cfo * c.sample_rate_hz / 1000).toFixed(2) + " kHz");
+  setV("vCh", chanShort(c), "Δf " + (c.cfo * c.sample_rate_hz / 1000).toFixed(2) + " kHz");
+  $("chChip").textContent = chanShort(c);
   setV("vRt", nil(R.realtime_factor) ? "–" : R.realtime_factor.toFixed(2) + "×", nil(Q.realtime_factor) ? undefined : Q.realtime_factor.toFixed(2) + "×",
        nil(R.realtime_factor) ? "" : R.realtime_factor <= 1 ? "ok" : "warn");
 }
@@ -555,7 +629,7 @@ function pipeline(s) {
   set("pPayload", c.source === "text" ? `TEXT · ${s.message_bytes} B` : `IMAGE · ${c.image_size}×${c.image_size}${c.gray ? " gray" : ""}`);
   set("pPack", `${s.n_packets} × ≤${c.max_payload} B + CRC-16`);
   set("pMod", MODNAME[c.mod]);
-  set("pChan", `AWGN · ${c.snr_db.toFixed(1)} dB · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
+  set("pChan", `${s.channel_desc} · ${c.snr_db.toFixed(1)} dB · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
   if (!L) { for (const id of ["pSync", "pEq", "pDem", "pCrc"]) set(id, "–"); }
   else {
     const det = L.sync_metric >= SYNC_THRESHOLD;
@@ -610,6 +684,7 @@ function drawSignals() {
   drawConst();
   const [nf, bw] = drawPsd(L);
   drawWave(L);
+  drawChan(L);
   const e = L ? evm(L.constellation, s.ideal) : null;
   $("rSnr").textContent = L ? `${c.snr_db.toFixed(1)} set · ${nil(L.snr_est_db) ? "–" : L.snr_est_db.toFixed(1)} est` : "–";
   $("rEvm").textContent = nil(e) ? "–" : (100 * e).toFixed(1) + "%";
