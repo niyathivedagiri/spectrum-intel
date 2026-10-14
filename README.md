@@ -160,6 +160,51 @@ In the dashboard: Modulation → AUTO, plus an SNR swing to imitate a moving use
   packets (fast fading), choosing from the last report adds risk without information; a fixed robust choice, or
   deciding from the average SNR, would be better. The genie shows what timely feedback would be worth.
 
+**Phase 7 (done): smarter channel selection.** The original cognitive layer hopped to the free channel idle
+the longest and only counted collisions. Now the link actually lives in the 8-channel band (`selection.py`):
+every slot a policy picks a channel *from the past only*, the packet goes through the real PHY at that
+channel's SNR (each channel is a different link for us: base SNR + offset of −8 to +8 dB), and if the licensed
+user is on, its signal is added as interference at its own power (so a collision may or may not destroy our
+packet). Sensing uses the CNN's measured detection / false-alarm rates (100% / 1.48%). Every policy sees the same
+licensed users and sensing errors. Policies: **random**, **hop** (the original rule, same decisions, tested),
+**predict** (learns each channel's on/off statistics and picks the one most likely free next slot),
+**quality** (also learns our SNR on each channel and picks the highest *expected goodput* =
+P(free next) × goodput at that SNR, with a hop margin) and **oracle** (quality with the true statistics).
+In the dashboard: Spectrum band → on, then pick the policy, sensing quality and harm weight.
+
+| Measured (`exp_channel_selection.py`, base SNR 6 dB, CNN sensing, 3 seeds × 1400 slots) | Collisions | Our goodput |
+|---|---|---|
+| random (no sensing) | 45.4% | 71 kbps |
+| hop (original) | 8.0% | 112 kbps |
+| predict (learns on/off) | **6.3%** | 90 kbps |
+| quality (learns on/off + our link) | 8.4% | **214 kbps** |
+| oracle (true statistics, same rule) | 8.7% | 210 kbps |
+
+| Other parts (seed 8) | Result |
+|---|---|
+| Goodput, hop → quality, at base SNR 0 / 6 / 12 dB | 56 → 141 (2.5×) · 109 → 211 · 174 → 225 kbps: the gain is largest when the link is weak |
+| Hop margin 0 → 1.0 (quality) | hops per 100 slots 15.4 → 8.9; with a 5 ms cost per hop the best goodput moves from margin 0 (168 kbps) to 1.0 (182) |
+| Sensing perfect / CNN / degraded (Pd 0.9, Pfa 0.1) / poor (0.7, 0.25): collisions of hop · predict · quality | 8.6·6.1·8.4% / 8.3·6.3·7.7% / 9.0·8.4·12.7% / 19.9·13.1·**38.0%** |
+| Harm weight 0 → 1 (quality, poor sensing) | collisions 38.0% → 16.8%, goodput 243 → 203 kbps (still about 2× hop) |
+| Harm weight 0 → 4 (quality, CNN sensing) | collisions 7.7% → 7.1%, goodput 219 → 208 kbps: little to gain when sensing is good |
+
+- **Two goals, not one.** Learning the on/off statistics (predict) gives the fewest collisions; learning our own
+  link (quality) nearly doubles goodput but does *not* reduce collisions: it matches the original rule (8.4%
+  vs 8.0%) and collides more than predict. Hypothesis checks: H1 (predict collides less) held; H2 ("more goodput
+  at no extra harm") held only against the original rule; H3 held in a changed form: the best hop margin grows with
+  the cost of a hop (the largest margin tested won at 5 ms); H4 ("ranking survives sensing errors") failed for
+  collisions under poor sensing, as the next point shows.
+- **Capture effect.** A collision is not always a lost packet: when our signal is much stronger than the
+  licensed user's, our packet survives. With poor sensing the goodput-seeking policy exploits this and collides
+  in 38% of slots while its own goodput *rises* — good for us, bad for the licensed user. The **harm weight**
+  (subtracting the predicted chance of a collision from each channel's score) was added *after* seeing this, and
+  trades ~16% of our goodput for less than half the collisions.
+- **"Oracle" is not an upper bound here.** It knows the true statistics but uses the same one-step greedy rule,
+  so quality matches it once it has learned (within the run-to-run spread). A true bound would plan ahead.
+- **Limitations.** Licensed users follow simple two-state Markov chains with fixed rates; our per-channel SNR is
+  constant (no fading between slots); one secondary user only (no competition); collisions are counted per slot,
+  not by how much they hurt the licensed user's own link.
+
 ```bash
 python scripts/dashboard.py                                                    # opens http://127.0.0.1:8765
 python scripts/dashboard.py --source image --snr 3                            # the sample photo
@@ -167,6 +212,7 @@ python scripts/exp_realtime.py                                                 #
 python scripts/exp_channel.py                                                  # fading, multipath, jamming (~75 s)
 python scripts/calibrate_link_table.py                                         # PER-vs-SNR table for adaptation (~90 s)
 python scripts/exp_adaptation.py                                               # adaptive vs fixed modulation (~3 min)
+python scripts/exp_channel_selection.py                                        # which channel to use (~4.5 min)
 python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
@@ -201,15 +247,15 @@ The original validated numbers are frozen in `results/validated/metrics_v1.json`
 ```
 spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupancy, leo, plots
                   payload, coding, packet, modulation, transmitter, channel, receiver, link,
-                  metrics, experiments, engine, dashboard (+ web/dashboard.html), adaptation (+ link_table.json)   (communication link)
+                  metrics, experiments, engine, dashboard (+ web/dashboard.html), adaptation (+ link_table.json), selection   (communication link)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
                   demo_image_link, exp_image_link, exp_link_metrics,
-                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation
+                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation, exp_channel_selection
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
 docs/             dashboard screenshot
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            159 automated checks
+tests/            172 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -218,7 +264,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 159 checks
+python -m pytest                    # 172 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
