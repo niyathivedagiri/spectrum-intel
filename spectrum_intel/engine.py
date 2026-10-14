@@ -9,7 +9,10 @@ packets, bit errors and received bytes for the same seed. What it adds:
   - display data for the last frame: equalised constellation, received spectrum,
     waveform around the detected frame start,
   - the message as it builds up, the scorecard so far and over the last packets,
-  - wall-clock processing time per packet vs the packet's airtime (real-time factor).
+  - wall-clock processing time per packet vs the packet's airtime (real-time factor),
+  - optional band mode: the link lives in an 8-channel band shared with licensed users
+    and a channel-selection policy (selection.py) picks the channel for every packet.
+    With band mode off (the default) nothing changes.
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ from spectrum_intel import channel as chm
 from spectrum_intel.adaptation import POLICIES, LinkAdapter
 from spectrum_intel import metrics as m
 from spectrum_intel import payload as pl
+from spectrum_intel import selection as sel
 from spectrum_intel.link import PacketRecord, transfer_packet
 from spectrum_intel.modulation import LINK_MODULATIONS
 from spectrum_intel.packet import reassemble, segment
@@ -43,7 +47,10 @@ CHANNEL_FIELDS = ("fading", "k_factor_db", "doppler_hz", "multipath", "delay_spr
                   "jammer", "sir_db", "jam_offset_khz", "duty")
 RECEIVER_FIELDS = ("equalizer", "eq_taps", "pilot_window")
 AMC_FIELDS = ("adaptive", "amc_policy", "target_per", "snr_swing_db", "swing_period")
-LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps", *CHANNEL_FIELDS, *RECEIVER_FIELDS, *AMC_FIELDS}
+BAND_FIELDS = ("band", "band_policy", "harm_weight", "sensing")
+LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps", *CHANNEL_FIELDS, *RECEIVER_FIELDS, *AMC_FIELDS,
+               *BAND_FIELDS}
+BAND_HISTORY = 48               # slots shown in the dashboard's occupancy grid
 RESET_FIELDS = {"source", "text", "image_size", "gray", "seed", "max_payload"}  # need a restart
 MAX_TEXT_CHARS = 4000
 MAX_IMAGE_SIZE = 128
@@ -84,6 +91,11 @@ class EngineConfig:
     target_per: float = 0.1         # packet error rate the adaptation aims for
     snr_swing_db: float = 0.0       # SNR moves as snr_db + swing * sin(2 pi k / swing_period), k = packet index
     swing_period: int = 60
+    # band mode (selection.py): 8 channels shared with licensed users, a policy picks the channel
+    band: bool = False
+    band_policy: str = "quality"    # random / hop / predict / quality / oracle
+    harm_weight: float = 0.0        # quality/oracle only: penalty on the predicted chance of a collision
+    sensing: str = "cnn"            # perfect / cnn / degraded / poor (detection and false-alarm rates)
 
     def validated(self) -> "EngineConfig":
         if self.source not in ("text", "image"):
@@ -92,6 +104,10 @@ class EngineConfig:
             raise ValueError(f"mod must be one of {LINK_MODULATIONS}")
         if self.amc_policy not in POLICIES:
             raise ValueError(f"amc_policy must be one of {POLICIES}")
+        if self.band_policy not in sel.POLICIES:
+            raise ValueError(f"band_policy must be one of {sel.POLICIES}")
+        if self.sensing not in sel.SENSING:
+            raise ValueError(f"sensing must be one of {tuple(sel.SENSING)}")
         if self.equalizer not in ("none", "ls"):
             raise ValueError("equalizer must be 'none' or 'ls'")
         self.channel()                                   # checks fading / multipath / jammer names
@@ -114,7 +130,8 @@ class EngineConfig:
                        pilot_window=int(np.clip(self.pilot_window, 1, 15)),
                        adaptive=bool(self.adaptive), target_per=float(np.clip(self.target_per, 0.01, 0.5)),
                        snr_swing_db=float(np.clip(self.snr_swing_db, 0, 20)),
-                       swing_period=int(np.clip(self.swing_period, 4, 2000)))
+                       swing_period=int(np.clip(self.swing_period, 4, 2000)),
+                       band=bool(self.band), harm_weight=float(np.clip(self.harm_weight, 0, 10)))
 
     def channel(self) -> chm.ChannelConfig:
         """The channel impairments as a ChannelConfig (raises ValueError on an unknown model)."""
@@ -200,6 +217,9 @@ class LinkEngine:
         self.process_ms: list[float] = []
         self._good, self._rough = {}, {}
         self.adapter = LinkAdapter(c.amc_policy, c.target_per)
+        self.bandlink: sel.BandLink | None = None     # created when band mode is first switched on
+        self.channels: list[int | None] = []         # band channel used per packet (None outside band mode)
+        self.collided: list[bool | None] = []        # whether that packet hit an active licensed user
         self.last: StepView | None = None
         self.started = time.time()
 
@@ -234,8 +254,30 @@ class LinkEngine:
                 fb = self.adapter.snr_fb                       # keep the latest feedback, restart the loop
                 self.adapter = LinkAdapter(new.amc_policy, new.target_per)
                 self.adapter.snr_fb = fb
+            self._band_update(self.config, new)
             self.config = new
         return restart
+
+    # ---------------------------------------------------------------- band mode
+    def _selector(self, c: EngineConfig, band: sel.Band) -> sel.Selector:
+        return sel.make_selector(c.band_policy, band.n_ch, np.random.default_rng([c.seed, 9]), users=band.users,
+                                 link_snr_db=c.snr_db + band.offsets, harm_weight=c.harm_weight)
+
+    def _band_update(self, old: EngineConfig, new: EngineConfig):
+        """Policy or harm-weight change: a fresh selector (it learns again); sensing: new error rates."""
+        if self.bandlink is None:
+            return
+        if (old.band_policy, old.harm_weight) != (new.band_policy, new.harm_weight):
+            self.bandlink.selector = self._selector(new, self.bandlink.band)
+        self.bandlink.band.pd, self.bandlink.band.pfa = sel.SENSING[new.sensing]
+
+    def _ensure_band(self) -> sel.BandLink:
+        if self.bandlink is None:
+            c = self.config
+            pd, pfa = sel.SENSING[c.sensing]
+            band = sel.Band(pd=pd, pfa=pfa, seed=c.seed)        # own random streams: the PHY's stay untouched
+            self.bandlink = sel.BandLink(self._selector(c, band), band)
+        return self.bandlink
 
     def snr_for(self, k: int) -> float:
         """SNR used for packet k (the set SNR, plus the optional slow swing)."""
@@ -259,12 +301,22 @@ class LinkEngine:
         k = len(self.records)
         pkt = self.packets[k]
         snr = self.snr_for(k)
-        mod = self.adapter.choose() if c.adaptive else c.mod      # adaptation only knows past feedback
+        phy = dict(max_payload=c.max_payload, cfo=c.cfo, keep_corrupted=c.tolerant, channel=c.channel(),
+                   equalizer=c.equalizer, eq_taps=c.eq_taps, pilot_window=c.pilot_window, sample_rate_hz=c.sample_rate_hz)
         t0 = time.perf_counter()
-        t = transfer_packet(pkt, self.n_packets, mod, snr, self.rng, max_payload=c.max_payload,
-                            cfo=c.cfo, keep_corrupted=c.tolerant, channel=c.channel(),
-                            equalizer=c.equalizer, eq_taps=c.eq_taps, pilot_window=c.pilot_window,
-                            sample_rate_hz=c.sample_rate_hz)
+        if c.band:
+            # the policy picks the channel; SNR = set SNR + that channel's offset; if its licensed
+            # user is on, its signal is added as interference (replacing the jammer setting).
+            # AUTO picks the modulation per channel from our last SNR report there (goodput policy).
+            e = self._ensure_band().step(pkt, self.n_packets, snr, self.rng, mod=None if c.adaptive else c.mod, **phy)
+            t, snr = e["transfer"], e["snr_db"]
+            self.channels.append(e["ch"])
+            self.collided.append(e["collided"])
+        else:
+            mod = self.adapter.choose() if c.adaptive else c.mod  # adaptation only knows past feedback
+            t = transfer_packet(pkt, self.n_packets, mod, snr, self.rng, **phy)
+            self.channels.append(None)
+            self.collided.append(None)
         proc_ms = 1e3 * (time.perf_counter() - t0)
         if t.good is not None:
             self._good[t.good.seq] = t.good
@@ -383,8 +435,15 @@ class LinkEngine:
                            "snr_est": _num(r.snr_est_db), "outcome": self.outcomes[off + j],
                            "bit_errors": r.bit_errors, "n_bits": r.n_bits,
                            "process_ms": round(self.process_ms[off + j], 2),
-                           "airtime_ms": round(1e3 * r.n_samples / c.sample_rate_hz, 3)}
+                           "airtime_ms": round(1e3 * r.n_samples / c.sample_rate_hz, 3),
+                           "ch": self.channels[off + j], "collided": self.collided[off + j]}
                           for j, r in enumerate(recs)]
+        out["band"] = self.band_view()
+        if c.band and c.adaptive and self.bandlink is not None:
+            # in band mode AUTO picks per channel, from our last SNR report on the channel chosen next
+            bl = self.bandlink
+            out["amc"] = out["amc"] | {"policy": "goodput per channel", "offset_db": 0.0,
+                                       "next": bl.modulation(bl.selector.current)}
         v = self.last
         if v is not None:
             dec = max(1, len(v.wave_i) // 600)
@@ -404,6 +463,31 @@ class LinkEngine:
                            "wave": {"i": np.round(v.wave_i[::dec], 4).tolist(),
                                     "q": np.round(v.wave_q[::dec], 4).tolist(),
                                     "start": v.wave_start, "step": dec, "frame_start": v.frame_start}}
+        return out
+
+
+    def band_view(self) -> dict:
+        """Band mode display: who is on, what we sensed, which channel we used, over recent slots."""
+        c = self.config
+        if self.bandlink is None:
+            return {"enabled": c.band, "started": False}
+        bl, b = self.bandlink, self.bandlink.band
+        log = bl.log[-BAND_HISTORY:]
+        s = bl.selector
+        out = {"enabled": c.band, "started": True, "policy": s.name, "n_ch": b.n_ch,
+               "offsets_db": b.offsets.tolist(), "pu_snr_db": [u.snr_db for u in b.users],
+               "pu_signal": [u.label for u in b.users], "pd": b.pd, "pfa": b.pfa,
+               "slots": [{"slot": e["slot"], "ch": e["ch"], "collided": e["collided"], "ok": e["ok"], "mod": e["mod"],
+                          "active": e["active"].astype(int).tolist(), "sensed": e["sensed"].astype(int).tolist()}
+                         for e in log],
+               "next_ch": int(s.current), "active_now": b.active.astype(int).tolist()}
+        if bl.log:
+            out["summary"] = {k: v for k, v in sel.summarise(bl.log).items() if k != "slots"} | {"slots": len(bl.log)}
+            out["summary"]["goodput_kbps"] = round(out["summary"]["goodput_kbps"], 2)
+        if hasattr(s, "p_free_next"):
+            out["p_free_next"] = np.round(s.p_free_next(), 3).tolist()
+        if hasattr(s, "snr_view"):
+            out["learned_snr_db"] = [None if np.isnan(x) else round(float(x), 1) for x in s.snr]
         return out
 
 
