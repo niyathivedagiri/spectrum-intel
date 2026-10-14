@@ -1,0 +1,26 @@
+{
+  "experiment": "fec",
+  "seed": 8,
+  "created": "20261014-075910",
+  "config": {
+    "code": "K=7 (133,171) rate 1/2, punctured 2/3 and 3/4 (802.11 patterns)",
+    "packet_bytes": 64,
+    "header": "uncoded BPSK",
+    "packets_per_point": 120,
+    "packets_per_point_bursts": 150,
+    "fast_fading": {
+      "fading": "rayleigh",
+      "doppler_hz": 500.0
+    },
+    "slow_fading": {
+      "fading": "rayleigh",
+      "doppler_hz": 0.0
+    },
+    "fading_pilot_window": 3,
+    "jammer": "pulsed, duty 0.1, QPSK at SNR 12 dB"
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}
