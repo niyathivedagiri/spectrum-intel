@@ -11,8 +11,9 @@ Frame (symbol stream, before pulse shaping):
 * Pilots (P = +1) before every block of 16 data symbols and one at the end:
   the receiver interpolates the channel's gain/phase between them, so slow
   phase drift and fading are tracked through the frame.
-* Data = 32-bit PHY header in BPSK (modulation id, payload length, CRC-16),
-  then the payload in the chosen modulation. Sending the header in the most
+* Data = 32-bit PHY header in BPSK (modulation + FEC code id, payload length, CRC-16),
+  then the payload in the chosen modulation, optionally protected by FEC (fec.py:
+  convolutional code, punctured, interleaved). Uncoded frames are unchanged. Sending the header in the most
   robust modulation is how real systems (e.g. Wi-Fi's SIGNAL field) tell the
   receiver what follows.
 
@@ -25,6 +26,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from spectrum_intel import fec
 from spectrum_intel.coding import crc16
 from spectrum_intel.modulation import LINK_MODULATIONS, modulate
 from spectrum_intel.payload import bits_to_bytes, bytes_to_bits
@@ -53,22 +55,30 @@ PREAMBLE = _m_sequence().astype(complex)
 PILOT = 1.0 + 0j
 
 
-def header_bits(mod: str, n_bytes: int) -> np.ndarray:
-    """32-bit PHY header: 4-bit modulation id, 12-bit payload length, CRC-16 of those 2 bytes."""
+def header_bits(mod: str, n_bytes: int, code: str = "none") -> np.ndarray:
+    """32-bit PHY header: 4-bit scheme id, 12-bit payload length, CRC-16 of those 2 bytes.
+
+    scheme id = modulation index + 4 x code index, so uncoded frames keep ids 0..2 (as before).
+    """
     if not 0 <= n_bytes <= MAX_PAYLOAD_BYTES:
         raise ValueError(f"payload must be 0..{MAX_PAYLOAD_BYTES} bytes")
-    word = (LINK_MODULATIONS.index(mod) << 12) | n_bytes
+    word = ((LINK_MODULATIONS.index(mod) + 4 * fec.CODES.index(fec.check_code(code))) << 12) | n_bytes
     two = word.to_bytes(2, "big")
     return bytes_to_bits(two + crc16(two).to_bytes(2, "big"))
 
 
-def parse_header(bits: np.ndarray):
-    """Returns (mod, n_bytes, ok)."""
+def parse_header(bits: np.ndarray, with_code: bool = False):
+    """Returns (mod, n_bytes, ok), or (mod, code, n_bytes, ok) with with_code=True."""
     raw = bits_to_bytes(bits[:HEADER_BITS])
     ok = crc16(raw[:2]) == int.from_bytes(raw[2:4], "big")
     word = int.from_bytes(raw[:2], "big")
-    mod_id, n_bytes = word >> 12, word & 0xFFF
+    scheme, n_bytes = word >> 12, word & 0xFFF
+    mod_id, code_id = scheme % 4, scheme // 4
     if not ok or mod_id >= len(LINK_MODULATIONS):
+        return (None, "none", 0, False) if with_code else (None, 0, False)
+    if with_code:
+        return LINK_MODULATIONS[mod_id], fec.CODES[code_id], n_bytes, True
+    if code_id:                                       # a coded frame cannot be read as uncoded
         return None, 0, False
     return LINK_MODULATIONS[mod_id], n_bytes, True
 
@@ -93,23 +103,27 @@ class TxFrame:
     iq: np.ndarray                 # complex baseband samples
     mod: str
     payload: bytes
-    payload_bits: np.ndarray
+    payload_bits: np.ndarray       # data bits (before FEC)
     symbols: np.ndarray            # full symbol stream (preamble + pilots + data)
     data_symbols: np.ndarray       # header + payload symbols (no pilots)
     n_payload_symbols: int
     info: dict = field(default_factory=dict)
+    code: str = "none"
+    coded_bits: np.ndarray | None = None   # bits on air (after FEC; = payload_bits when uncoded)
 
 
-def build_frame(payload: bytes, mod: str) -> TxFrame:
+def build_frame(payload: bytes, mod: str, code: str = "none", interleaved: bool = True) -> TxFrame:
     if mod not in LINK_MODULATIONS:
         raise ValueError(f"mod must be one of {LINK_MODULATIONS}")
     bits = bytes_to_bits(payload)
-    hdr = modulate(header_bits(mod, len(payload)), "bpsk")
-    pay = modulate(bits, mod)
+    coded = fec.encode(bits, code, interleaved)
+    hdr = modulate(header_bits(mod, len(payload), code), "bpsk")
+    pay = modulate(coded, mod)
     data = np.concatenate([hdr, pay])
     stream = np.concatenate([PREAMBLE, insert_pilots(data)])
     iq = pulse_shape(stream, SPS, BETA, SPAN)
     return TxFrame(iq=iq, mod=mod, payload=payload, payload_bits=bits, symbols=stream,
                    data_symbols=data, n_payload_symbols=len(pay),
                    info={"n_symbols": len(stream), "n_samples": len(iq),
-                         "overhead_symbols": len(stream) - len(pay)})
+                         "overhead_symbols": len(stream) - len(pay)},
+                   code=code, coded_bits=coded)

@@ -27,13 +27,16 @@ class PacketRecord:
     header_ok: bool
     crc_ok: bool
     used_corrupted: bool        # accepted despite a CRC failure (error-tolerant mode only)
-    bit_errors: int | None      # raw bit errors in the packet (None if the frame was lost)
+    bit_errors: int | None      # bit errors in the packet as delivered (after FEC decoding, if any; None if lost)
     snr_est_db: float
     cfo_est: float
     n_samples: int              # airtime of the frame in samples
     data_bytes: int = 0         # user data bytes carried by this packet
     symbol_errors: int | None = None
     n_symbols: int = 0          # payload symbols in the frame
+    code: str = "none"          # FEC code ("none", "1/2", "2/3", "3/4")
+    channel_bit_errors: int | None = None   # raw errors in the bits on air, before decoding (= bit_errors uncoded)
+    n_channel_bits: int = 0     # bits on air (= n_bits uncoded)
 
 
 @dataclass
@@ -76,22 +79,25 @@ def transfer_packet(pkt: Packet, n_packets: int, mod: str, snr_db: float, rng: n
                     max_payload: int = 64, cfo: float = 0.0, cfo_search: float = 0.0,
                     keep_corrupted: bool = False, channel: "ch.ChannelConfig | None" = None,
                     equalizer: str = "none", eq_taps: int = 7, pilot_window: int = 7,
-                    sample_rate_hz: float = 1e6) -> PacketTransfer:
+                    sample_rate_hz: float = 1e6, code: str = "none", decoding: str = "soft",
+                    interleave: bool = True) -> PacketTransfer:
     """Send ONE packet through transmitter -> channel -> receiver and score it.
 
     Shared by `send` (whole messages) and the real-time engine (one packet per step),
     so both produce identical results for the same random generator.
     """
     block = pkt.to_bytes()
-    frame = build_frame(block, mod)
+    frame = build_frame(block, mod, code, interleave)
     rx, chan = ch.dynamic_link(frame.iq, snr_db, rng, channel, cfo=cfo, fs=sample_rate_hz)
-    res = receive(rx, cfo_search=cfo_search, equalizer=equalizer, eq_taps=eq_taps, pilot_window=pilot_window)
-    crc_ok, errs, sym_err, good, rough = False, None, None, None, None
+    res = receive(rx, cfo_search=cfo_search, equalizer=equalizer, eq_taps=eq_taps, pilot_window=pilot_window,
+                  decoding=decoding, interleaved=interleave)
+    crc_ok, errs, ch_errs, sym_err, good, rough = False, None, None, None, None, None
     tx_bits = bytes_to_bits(block)
     if res.header_ok:
         errs = bit_errors(tx_bits, res.payload_bits)
+        ch_errs = bit_errors(frame.coded_bits, res.channel_bits)
         rx_pay = res.data_symbols[HEADER_BITS:]
-        sym_err = int(np.sum(nearest_index(rx_pay, mod) != symbol_indices(tx_bits, mod)[:len(rx_pay)]))
+        sym_err = int(np.sum(nearest_index(rx_pay, mod) != symbol_indices(frame.coded_bits, mod)[:len(rx_pay)]))
         parsed, crc_ok = Packet.from_bytes(res.payload)
         if crc_ok:
             good = parsed
@@ -100,7 +106,8 @@ def transfer_packet(pkt: Packet, n_packets: int, mod: str, snr_db: float, rng: n
     record = PacketRecord(pkt.seq, mod, len(block) * 8, res.detected, res.header_ok, crc_ok,
                           rough is not None, errs, res.snr_est_db, res.cfo_est, len(frame.iq),
                           data_bytes=len(pkt.data), symbol_errors=sym_err,
-                          n_symbols=frame.n_payload_symbols)
+                          n_symbols=frame.n_payload_symbols, code=code, channel_bit_errors=ch_errs,
+                          n_channel_bits=len(frame.coded_bits))
     return PacketTransfer(record, frame, rx, res, good, rough, chan)
 
 
@@ -108,7 +115,7 @@ def send(data: bytes, mod: str, snr_db: float, rng: np.random.Generator, *,
          max_payload: int = 64, cfo: float = 0.0, cfo_search: float = 0.0,
          keep_frames: bool = False, keep_corrupted: bool = False, fill: int = 0x00,
          channel: "ch.ChannelConfig | None" = None, equalizer: str = "none", eq_taps: int = 7,
-         pilot_window: int = 7) -> LinkResult:
+         pilot_window: int = 7, code: str = "none", decoding: str = "soft", interleave: bool = True) -> LinkResult:
     """Send data over an AWGN link with random phase/timing (and optional frequency offset).
 
     keep_corrupted=False (default): packets failing the CRC are dropped (missing).
@@ -118,13 +125,15 @@ def send(data: bytes, mod: str, snr_db: float, rng: np.random.Generator, *,
     channel: fading / multipath / interference (channel.ChannelConfig); None = AWGN only.
     equalizer: receiver option, "none" or "ls" (preamble-trained, for multipath).
     pilot_window: pilots averaged per channel estimate (small = follows fast fading, large = less noise).
+    code: FEC ("none", "1/2", "2/3", "3/4"; fec.py), decoding "soft", "soft_fixed" or "hard", interleave on/off.
     """
     packets = segment(data, max_payload)
     records, good, frames, corrupted, rough_pkts = [], [], [], [], []
     for pkt in packets:
         t = transfer_packet(pkt, len(packets), mod, snr_db, rng, max_payload=max_payload,
                             cfo=cfo, cfo_search=cfo_search, keep_corrupted=keep_corrupted,
-                            channel=channel, equalizer=equalizer, eq_taps=eq_taps, pilot_window=pilot_window)
+                            channel=channel, equalizer=equalizer, eq_taps=eq_taps, pilot_window=pilot_window,
+                            code=code, decoding=decoding, interleave=interleave)
         records.append(t.record)
         if t.good is not None:
             good.append(t.good)

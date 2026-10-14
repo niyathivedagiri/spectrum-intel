@@ -133,7 +133,9 @@ def link_report(result, sample_rate_hz: float = DEFAULT_SAMPLE_RATE_HZ) -> dict:
       spectral_eff         goodput / occupied bandwidth  (bit/s/Hz)
       latency_frame_ms     airtime of one frame (one-way, no retransmission)
       latency_message_ms   airtime until the last packet of the message has been sent
-    Error accounting: raw bit errors (before any correction), symbol errors, packet failures.
+    Error accounting: raw bit errors (before any correction, i.e. on the bits on air), bit errors
+    after FEC decoding (ber_decoded; equal to ber for uncoded packets), symbol errors, packet failures.
+    FEC parity bits count as overhead (they are sent but are not user data).
     Packets may use different modulations (adaptive or live-switched links): mod is then
     "mixed" and the PHY rate uses the symbol-weighted bits per symbol.
     """
@@ -148,8 +150,12 @@ def link_report(result, sample_rate_hz: float = DEFAULT_SAMPLE_RATE_HZ) -> dict:
     k = (sum(x.n_symbols * bits_per_symbol(x.mod) for x in p) / n_pay) if n_pay else bits_per_symbol(p[0].mod)
     airtime_s = sum(x.n_samples for x in p) / sample_rate_hz
     demod = [x for x in p if x.bit_errors is not None]
-    bits_demod = sum(x.n_bits for x in demod)
-    bit_err = sum(x.bit_errors for x in demod)
+    raw = [(x.channel_bit_errors, x.n_channel_bits) if getattr(x, "n_channel_bits", 0) else (x.bit_errors, x.n_bits)
+           for x in demod]
+    bits_demod = sum(n for _, n in raw)
+    bit_err = sum(e for e, _ in raw)
+    dec_bits = sum(x.n_bits for x in demod)
+    dec_err = sum(x.bit_errors for x in demod)
     sym = [x for x in p if x.symbol_errors is not None]
     n_sym = sum(x.n_symbols for x in sym)
     data_bits_sent = 8 * sum(x.data_bytes for x in p)
@@ -164,6 +170,8 @@ def link_report(result, sample_rate_hz: float = DEFAULT_SAMPLE_RATE_HZ) -> dict:
         "packet_error_rate": 1 - sum(x.crc_ok for x in p) / n,
         "raw_bit_errors": bit_err, "bits_demodulated": bits_demod,
         "ber": bit_err / bits_demod if bits_demod else float("nan"),
+        "ber_decoded": dec_err / dec_bits if dec_bits else float("nan"),
+        "codes": sorted({getattr(x, "code", "none") for x in p}),
         "ser": sum(x.symbol_errors for x in sym) / n_sym if n_sym else float("nan"),
         "packets_lost": sum(not x.header_ok for x in p),
         "packets_crc_failed": sum(x.header_ok and not x.crc_ok for x in p),

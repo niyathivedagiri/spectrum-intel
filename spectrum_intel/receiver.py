@@ -20,7 +20,12 @@ Steps
     squares so that it turns the received preamble back into the known preamble. It
     undoes multipath echoes (intersymbol interference), which the one-tap pilot
     correction cannot. Off by default.
- 6. Header (BPSK) -> modulation + length; payload demapping -> bits -> bytes.
+ 6. Header (BPSK) -> modulation, FEC code + length; payload demapping -> bits -> bytes.
+    Coded frames (fec.py): each bit gets a log-likelihood ratio from its symbol, scaled by
+    the noise at that symbol (noise / |pilot gain|^2, so bits received in a fade are trusted
+    less, and at least the noise measured around that symbol, so bits hit by an interference
+    burst are trusted less); then de-interleaving and Viterbi decoding ("soft"), or decoding
+    from the 0/1 decisions only ("hard").
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.signal import correlate
 
+from spectrum_intel import fec
 from spectrum_intel.modulation import bits_per_symbol, demodulate
 from spectrum_intel.payload import bits_to_bytes
 from spectrum_intel.signals import rrc_taps
@@ -58,6 +64,8 @@ class RxResult:
     cfo_est: float = 0.0                         # cycles/sample
     start: int = -1
     sync_metric: float = 0.0
+    code: str = "none"                           # FEC code read from the header
+    channel_bits: np.ndarray | None = None       # hard decisions on the bits on air (before FEC decoding)
     info: dict = field(default_factory=dict)
 
 
@@ -170,7 +178,8 @@ def _sync(y: np.ndarray):
 
 
 def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004,
-            equalizer: str = "none", eq_taps: int = EQ_TAPS, pilot_window: int = PILOT_WINDOW) -> RxResult:
+            equalizer: str = "none", eq_taps: int = EQ_TAPS, pilot_window: int = PILOT_WINDOW,
+            decoding: str = "soft", interleaved: bool = True) -> RxResult:
     """Demodulate one burst.
 
     cfo_search: if > 0, also try coarse frequency offsets in [-cfo_search, +cfo_search]
@@ -180,9 +189,15 @@ def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004,
     from the same 63 preamble symbols, so it adds more noise on a clean channel.
     pilot_window: pilots averaged per gain estimate. Large = less noise (best for slowly
     changing channels); small = follows fast fading (Doppler) but noisier.
+    decoding: FEC decoder input. "soft": LLRs with noise = the larger of (preamble noise / |gain|^2) and
+    the local noise around each symbol, so bursts and fades are trusted less. "soft_fixed": LLRs with the
+    preamble noise only (fooled by interference bursts). "hard": 0/1 decisions. Uncoded frames ignore it.
+    interleaved: must match the transmitter (a link setting, like the code's interleaver in Wi-Fi).
     """
     if equalizer not in ("none", "ls"):
         raise ValueError("equalizer must be 'none' or 'ls'")
+    if decoding not in fec.DECODINGS:
+        raise ValueError(f"decoding must be one of {fec.DECODINGS}")
     coarse = 0.0
     if cfo_search > 0:
         best = (-1.0, 0.0)
@@ -229,13 +244,14 @@ def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004,
     if len(stream) < stream_length(n_hdr):
         return res
     hdr_syms, _ = _gain_track(stream, n_hdr, pilot_window)
-    mod, n_bytes, ok = parse_header(demodulate(hdr_syms, "bpsk"))
+    mod, code, n_bytes, ok = parse_header(demodulate(hdr_syms, "bpsk"), with_code=True)
     res.header_ok = ok
     if not ok:
         return res
 
     # ---- payload ----------------------------------------------------------------------
-    n_pay = int(np.ceil(n_bytes * 8 / bits_per_symbol(mod)))
+    n_coded = fec.coded_length(n_bytes * 8, code)
+    n_pay = int(np.ceil(n_coded / bits_per_symbol(mod)))
     n_data = n_hdr + n_pay
     if len(stream) < stream_length(n_data):
         res.header_ok = False
@@ -245,8 +261,21 @@ def receive(rx: np.ndarray, cfo_search: float = 0.0, cfo_step: float = 0.004,
     dphi += resid
     res.cfo_est = coarse + dphi / (2 * np.pi) / SPS
     data, gains = _gain_track(stream, n_data, pilot_window)
-    bits = demodulate(data[n_hdr:], mod)[:n_bytes * 8]
+    channel_bits = demodulate(data[n_hdr:], mod)[:n_coded]             # hard decisions on the bits on air
+    if code == "none":
+        bits = channel_bits
+    else:
+        if decoding in ("soft", "soft_fixed"):
+            nv = noise_var / np.maximum(np.abs(gains[n_hdr:]) ** 2, 1e-12)   # noise after dividing by the gain
+            if decoding == "soft":
+                nv = np.maximum(nv, fec.local_noise(data[n_hdr:], mod))      # bursts: trust those bits less
+            llr = fec.soft_demap(data[n_hdr:], mod, nv)[:n_coded]
+        else:
+            llr = fec.hard_llr(channel_bits)
+        bits = fec.decode(llr, n_bytes * 8, code, interleaved)
     res.mod = mod
+    res.code = code
+    res.channel_bits = channel_bits
     res.payload_bits = bits
     res.payload = bits_to_bytes(bits)
     res.data_symbols = data
