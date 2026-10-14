@@ -205,6 +205,40 @@ In the dashboard: Spectrum band → on, then pick the policy, sensing quality an
   constant (no fading between slots); one secondary user only (no competition); collisions are counted per slot,
   not by how much they hurt the licensed user's own link.
 
+**Phase 8 (done): error correction (FEC).** Packets can now carry a convolutional code (`fec.py`):
+constraint length 7, generators 133/171 (the Wi-Fi and DVB-S code), rate 1/2, punctured to 2/3 and 3/4,
+a pseudo-random interleaver, and a Viterbi decoder fed with **soft** decisions (how sure the receiver is
+about each bit) or **hard** 0/1 decisions. The PHY header says which code follows (uncoded frames are
+bit-for-bit unchanged). Telemetry now shows the raw bit error rate on air and the rate after decoding.
+In the dashboard: Error correction → RATE ½ / ⅔ / ¾, decoder SOFT / SOFT·FIXED / HARD, interleaver on/off.
+
+| Measured (`exp_fec.py`, 64-byte packets, 120–150 per point) | Result |
+|---|---|
+| SNR for 10% packet errors, uncoded → rate 1/2 soft: BPSK / QPSK / 16-QAM | −0.8 → −3.0 · +2.4 → −2.9 · +9.6 → −0.2 dB (gain **2.2 / 5.3 / 9.8 dB**) |
+| Same, counting only packets whose header arrived (what the code itself does) | gain ≥ 5.2 / 8.0 / 9.8 dB |
+| Soft vs hard decoding (payload only), QPSK / 16-QAM | soft better by 1.6 / 2.8 dB |
+| Best goodput at −4 / 0 / 5 / 12 dB: uncoded → coding allowed | 4 → 85 (QPSK ⅔) · 88 → 141 (16-QAM ½) · 155 → 196 (16-QAM ¾) · 247 uncoded 16-QAM wins from 9 dB |
+| Fast fading inside a packet (Doppler 500 Hz), mean SNR for 10% payload errors | uncoded: never (up to 24 dB) · no interleaver 13.8 · hard 4.4 · soft ≤ 0 dB |
+| Long jammer bursts (500 µs every 5 ms), SIR for 10% payload errors | uncoded: never · no interleaver 3.1 · hard −5.8 · soft with one noise level −1.9 · soft with local noise ≤ −10 dB |
+| Processing time per 64-byte packet (Python Viterbi) | 8–13 ms with FEC vs 3–4 ms without (slower than real time for 16-QAM) |
+
+- **The uncoded header is now the weakest part.** Below about −3 dB, coded packets whose header arrives are
+  decoded with no errors; they fail because the 32-bit BPSK header (and frame detection) fail first. That is why
+  BPSK gains only 2.2 dB overall but at least 5.2 dB on the payload. Wi-Fi codes its header field for this reason;
+  coding ours is the obvious next step.
+- **Soft decoding was fooled by interference bursts (found by the first run, then fixed).** The LLRs used one
+  noise level measured on the preamble, so symbols hit by a jammer burst looked like very confident wrong bits:
+  soft decoding did *worse* than hard (96% vs 33% payload loss at SIR −10 dB). The receiver now also measures
+  the noise around each symbol (distance to the nearest constellation point, averaged over 9 symbols) and uses the
+  larger value. AWGN results are unchanged; under bursts soft is now the best. The old behaviour stays selectable
+  (`soft_fixed`) and is plotted beside it.
+- **The interleaver is what makes coding work against bursts.** Without it, fast fading needs 13.8 dB instead of
+  ≤ 0 dB. With slow fading (one fade per packet) there is nothing to spread and it makes no difference, as expected.
+  Even short jammer bursts (50 µs every 500 µs) need it: −2.2 dB SIR without, −7.7 dB with (soft).
+- **Coding is not free.** Rate 1/2 roughly halves the peak rate (16-QAM: 247 → 149 kbps); above about 9 dB
+  uncoded 16-QAM is best. The best scheme moves BPSK ½ → QPSK ½ … ¾ → 16-QAM ½ … ¾ → uncoded as SNR rises.
+  Choosing the code automatically (adaptive modulation *and* coding, as in LTE) is the natural extension of Phase 6.
+
 ```bash
 python scripts/dashboard.py                                                    # opens http://127.0.0.1:8765
 python scripts/dashboard.py --source image --snr 3                            # the sample photo
@@ -213,6 +247,7 @@ python scripts/exp_channel.py                                                  #
 python scripts/calibrate_link_table.py                                         # PER-vs-SNR table for adaptation (~90 s)
 python scripts/exp_adaptation.py                                               # adaptive vs fixed modulation (~3 min)
 python scripts/exp_channel_selection.py                                        # which channel to use (~4.5 min)
+python scripts/exp_fec.py                                                      # error correction (~4.5 min, 2 cores)
 python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
@@ -247,15 +282,15 @@ The original validated numbers are frozen in `results/validated/metrics_v1.json`
 ```
 spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupancy, leo, plots
                   payload, coding, packet, modulation, transmitter, channel, receiver, link,
-                  metrics, experiments, engine, dashboard (+ web/dashboard.html), adaptation (+ link_table.json), selection   (communication link)
+                  metrics, experiments, engine, dashboard (+ web/dashboard.html), adaptation (+ link_table.json), selection, fec   (communication link)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
                   demo_image_link, exp_image_link, exp_link_metrics,
-                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation, exp_channel_selection
+                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation, exp_channel_selection, exp_fec
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
 docs/             dashboard screenshot
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            172 automated checks
+tests/            195 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -264,7 +299,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 172 checks
+python -m pytest                    # 195 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
