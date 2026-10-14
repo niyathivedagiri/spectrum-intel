@@ -223,6 +223,17 @@
     </div>
 
     <div class="sec">
+      <div class="lbl">Error correction <span class="chip" id="fecChip">OFF</span></div>
+      <div class="sel" id="fec"><button data-v="none">OFF</button><button data-v="1/2">RATE ½</button><button data-v="2/3">⅔</button><button data-v="3/4">¾</button></div>
+      <div id="fecBox" class="hidden">
+        <div class="lbl" style="margin-top:10px">Decoder input</div>
+        <div class="sel" id="fdec"><button data-v="soft">SOFT</button><button data-v="soft_fixed">SOFT·FIXED</button><button data-v="hard">HARD</button></div>
+        <label class="sw"><input type="checkbox" id="ilv"><i></i>Interleave coded bits</label>
+      </div>
+      <div class="hint">Convolutional code K=7 (as in Wi-Fi) with a Viterbi decoder. Rate ½ sends 2 bits per data bit: much more robust, half the speed.</div>
+    </div>
+
+    <div class="sec">
       <div class="lbl">Channel <span class="chip" id="chChip">AWGN</span></div>
       <div class="lbl" style="margin-top:8px">Frequency offset <span class="mono" id="cfoV"></span></div>
       <div class="fader"><input type="range" id="cfo" min="0" max="4" step="0.25"><div class="ticks"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span></div></div>
@@ -327,6 +338,7 @@
       <div class="row"><span class="k">Packet success</span><span class="v" id="vPs">–</span></div>
       <div class="row"><span class="k">Packet loss</span><span class="v" id="vPl">–</span></div>
       <div class="row"><span class="k">BER (raw)</span><span class="v" id="vBer">–</span></div>
+      <div class="row"><span class="k">BER after FEC</span><span class="v" id="vBerD">–</span></div>
       <div class="row"><span class="k">SNR est</span><span class="v" id="vSnr">–</span></div>
       <div class="row"><span class="k">Goodput</span><span class="v" id="vGp">–</span></div>
       <div class="row"><span class="k">Throughput</span><span class="v" id="vTp">–</span></div>
@@ -360,6 +372,8 @@
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const MODNAME = {bpsk: "BPSK", qpsk: "QPSK", qam16: "16-QAM"};
+const FECNAME = {"1/2": "½", "2/3": "⅔", "3/4": "¾"};
+const fecTag = code => code && code !== "none" ? " · FEC " + FECNAME[code] : "";
 const SYNC_THRESHOLD = 0.58, PREAMBLE_SAMPLES = 63 * 8;          // receiver constants (receiver.py, transmitter.py)
 let S = null, lastCfg = null, busy = false, lastSent = -1, lastImg = "";
 let prevPktCh = null, prevPktMod = null, persist = [], prevPsd = null, curPsd = null, events = [], loggedUpTo = -1, prevRunning = null, prevDone = null;
@@ -417,6 +431,9 @@ seg("jammer", v => control("update", {jammer: v}));
 seg("eq", v => control("update", v === "none" ? {equalizer: "none"} : {equalizer: "ls", eq_taps: +v.slice(2)}));
 seg("pw", v => control("update", {pilot_window: +v}));
 $("band").onchange = e => control("update", {band: e.target.checked});
+seg("fec", v => control("update", {fec: v}));
+seg("fdec", v => control("update", {fec_decoding: v}));
+$("ilv").onchange = e => control("update", {interleave: e.target.checked});
 seg("bpol", v => control("update", {band_policy: v}));
 seg("sensing", v => control("update", {sensing: v}));
 $("go").onclick = () => control(S && S.running ? "pause" : "start");
@@ -445,6 +462,9 @@ function fillControls(c, prev) {
   $("dlyRow").classList.toggle("hidden", c.multipath === "none");
   $("sirRow").classList.toggle("hidden", c.jammer === "none");
   $("sizeV").textContent = c.image_size + "×" + c.image_size;
+  setSeg("fec", c.fec); setSeg("fdec", c.fec_decoding); $("ilv").checked = c.interleave;
+  $("fecBox").classList.toggle("hidden", c.fec === "none");
+  $("fecChip").textContent = c.fec === "none" ? "OFF" : `RATE ${FECNAME[c.fec]} · ${c.fec_decoding.replace("_", " ").toUpperCase()}`;
   $("band").checked = c.band; $("bandBox").classList.toggle("hidden", !c.band);
   setSeg("bpol", c.band_policy); setSeg("sensing", c.sensing);
   $("bandChip").textContent = c.band ? c.band_policy.toUpperCase() : "OFF";
@@ -462,6 +482,8 @@ function fillControls(c, prev) {
       event(`Receiver → equaliser ${c.equalizer === "none" ? "off" : "LS " + c.eq_taps + " taps"} · pilot averaging ${c.pilot_window}`, "cfg");
     if (prev.source !== c.source) event(`Payload → ${c.source.toUpperCase()}`, "cfg");
     if (prev.seed !== c.seed) event(`Seed → ${c.seed}`, "cfg");
+    if (prev.fec !== c.fec || prev.fec_decoding !== c.fec_decoding || prev.interleave !== c.interleave)
+      event(`FEC → ${c.fec === "none" ? "off" : "rate " + c.fec + " · " + c.fec_decoding + " decoding · interleaver " + (c.interleave ? "on" : "off")}`, "cfg");
     if (prev.band !== c.band) event(`Band mode ${c.band ? "ON (" + c.band_policy + ")" : "OFF"}`, "cfg");
     else if (c.band && (prev.band_policy !== c.band_policy || prev.harm_weight !== c.harm_weight))
       event(`Channel selection → ${c.band_policy}${c.harm_weight ? " · harm weight " + c.harm_weight : ""} (learning restarts)`, "cfg");
@@ -496,7 +518,8 @@ function logPackets(s) {
       if (latest && !nil(s.last.cfo_est)) event(`${p}  freq offset est ${(s.last.cfo_est * s.config.sample_rate_hz / 1000).toFixed(2)} kHz`);
       if (r.bit_errors === null) event(`${p}  PHY header CRC failed`, "err");
       else {
-        event(`${p}  header ok · ${MODNAME[r.mod]} · SNR est ${nil(r.snr_est) ? "–" : r.snr_est.toFixed(1)} dB`);
+        event(`${p}  header ok · ${MODNAME[r.mod]}${fecTag(r.code)} · SNR est ${nil(r.snr_est) ? "–" : r.snr_est.toFixed(1)} dB`);
+        if (r.code && r.code !== "none") event(`${p}  Viterbi: ${r.channel_bit_errors} raw bit err → ${r.bit_errors} after decoding`, r.bit_errors ? "warn" : "ok");
         if (r.outcome === "ok") event(`${p}  CRC passed`, "ok");
         else if (r.outcome === "damaged") event(`${p}  CRC failed · ${r.bit_errors} bit err · retained`, "warn");
         else event(`${p}  CRC failed · ${r.bit_errors} bit err · dropped`, "err");
@@ -710,13 +733,14 @@ function telemetry(s) {
   setV("vPs", pct(ps), pct(Q.packet_success_rate), nil(ps) ? "" : ps >= .9 ? "ok" : ps >= .5 ? "warn" : "err");
   setV("vPl", pct(R.packet_error_rate), pct(Q.packet_error_rate));
   setV("vBer", sci(R.ber), sci(Q.ber));
+  setV("vBerD", (R.codes || []).some(x => x !== "none") ? sci(R.ber_decoded) : "–", (R.codes || []).some(x => x !== "none") ? sci(Q.ber_decoded) : "no FEC");
   setV("vSnr", db(R.snr_est_db_mean), "set " + c.snr_db.toFixed(1) + " dB");
   setV("vGp", kbps(R.goodput_bps), kbps(Q.goodput_bps));
   setV("vTp", kbps(R.throughput_bps), kbps(Q.throughput_bps));
   setV("vLat", nil(R.latency_frame_ms) ? "–" : R.latency_frame_ms.toFixed(2) + " ms", "airtime");
   setV("vOh", pct(R.overhead_fraction));
   if (c.adaptive) setV("vMod", MODNAME[s.amc.next], `AUTO · ${s.amc.policy}` + (s.amc.policy === "olla" ? ` · ${s.amc.offset_db >= 0 ? "+" : ""}${s.amc.offset_db.toFixed(1)} dB` : ""), "sig");
-  else setV("vMod", MODNAME[c.mod], R.mod === "mixed" ? "run: mixed" : undefined, "sig");
+  else setV("vMod", MODNAME[c.mod], c.fec !== "none" ? "FEC " + FECNAME[c.fec] + " · " + c.fec_decoding : R.mod === "mixed" ? "run: mixed" : undefined, "sig");
   setV("vCh", chanShort(c), "Δf " + (c.cfo * c.sample_rate_hz / 1000).toFixed(2) + " kHz");
   $("chChip").textContent = chanShort(c);
   setV("vRt", nil(R.realtime_factor) ? "–" : R.realtime_factor.toFixed(2) + "×", nil(Q.realtime_factor) ? undefined : Q.realtime_factor.toFixed(2) + "×",
@@ -727,7 +751,7 @@ function pipeline(s) {
   const set = (id, t, cls) => { $(id).textContent = t; $(id).className = "v" + (cls ? " " + cls : ""); };
   set("pPayload", c.source === "text" ? `TEXT · ${s.message_bytes} B` : `IMAGE · ${c.image_size}×${c.image_size}${c.gray ? " gray" : ""}`);
   set("pPack", `${s.n_packets} × ≤${c.max_payload} B + CRC-16`);
-  set("pMod", c.adaptive ? `AUTO → ${MODNAME[s.amc.next]}` : MODNAME[c.mod]);
+  set("pMod", (c.adaptive ? `AUTO → ${MODNAME[s.amc.next]}` : MODNAME[c.mod]) + fecTag(c.fec));
   const lastCh = s.history.length ? s.history[s.history.length - 1].ch : null;
   const lastSnr = s.history.length ? s.history[s.history.length - 1].snr_set : s.snr_now_db;
   set("pChan", `${c.band && lastCh !== null ? "CH" + lastCh + " · " : ""}${s.channel_desc} · ${(c.band && lastCh !== null ? lastSnr : s.snr_now_db).toFixed(1)} dB${c.snr_swing_db ? " (swing ±" + c.snr_swing_db + ")" : ""} · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
@@ -774,9 +798,9 @@ function table(s) {
   $("log").innerHTML = s.history.slice().reverse().map(r => {
     const [tc, led, w] = word[r.outcome];
     const crc = r.bit_errors === null ? "—" : r.outcome === "ok" ? "PASS" : "FAIL";
-    return `<tr><td>${pk(r.seq)}</td><td class="${tc}"><span class="led ${led}"></span>${w}</td><td>${MODNAME[r.mod]}${r.ch === null || r.ch === undefined ? "" : " · CH" + r.ch}</td>
+    return `<tr><td>${pk(r.seq)}</td><td class="${tc}"><span class="led ${led}"></span>${w}</td><td>${MODNAME[r.mod]}${fecTag(r.code)}${r.ch === null || r.ch === undefined ? "" : " · CH" + r.ch}</td>
       <td>${r.snr_set.toFixed(1)} dB</td><td>${nil(r.snr_est) ? "–" : r.snr_est.toFixed(1) + " dB"}</td>
-      <td>${r.bit_errors === null ? "–" : r.bit_errors + " / " + r.n_bits}</td><td class="${crc === "PASS" ? "ok" : crc === "FAIL" ? tc : "err"}">${crc}</td>
+      <td>${r.bit_errors === null ? "–" : r.bit_errors + " / " + r.n_bits + (r.code && r.code !== "none" ? ` <span style="color:var(--muted)">(raw ${r.channel_bit_errors})</span>` : "")}</td><td class="${crc === "PASS" ? "ok" : crc === "FAIL" ? tc : "err"}">${crc}</td>
       <td>${r.airtime_ms.toFixed(2)} ms</td><td>${r.process_ms.toFixed(1)} ms</td></tr>`; }).join("");
 }
 
@@ -789,7 +813,7 @@ function drawSignals() {
   const e = L ? evm(L.constellation, s.ideal) : null;
   $("rSnr").textContent = L ? `${c.snr_db.toFixed(1)} set · ${nil(L.snr_est_db) ? "–" : L.snr_est_db.toFixed(1)} est` : "–";
   $("rEvm").textContent = nil(e) ? "–" : (100 * e).toFixed(1) + "%";
-  $("rBe").textContent = !L ? "–" : L.bit_errors === null ? "header lost" : `${L.bit_errors} / ${L.n_bits}`;
+  $("rBe").textContent = !L ? "–" : L.bit_errors === null ? "header lost" : `${L.bit_errors} / ${L.n_bits}` + (L.code && L.code !== "none" ? ` (raw ${L.channel_bit_errors})` : "");
   $("rPkt").textContent = L ? pk(L.seq) : "–";
   $("rBw").textContent = bw ? bw.toFixed(1) + " kHz" : "–";
   $("rNf").textContent = nil(nf) ? "–" : nf.toFixed(1) + " dB";

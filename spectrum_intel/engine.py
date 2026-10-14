@@ -25,6 +25,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from spectrum_intel import channel as chm
+from spectrum_intel import fec
 from spectrum_intel.adaptation import POLICIES, LinkAdapter
 from spectrum_intel import metrics as m
 from spectrum_intel import payload as pl
@@ -46,10 +47,11 @@ DEFAULT_TEXT = (
 CHANNEL_FIELDS = ("fading", "k_factor_db", "doppler_hz", "multipath", "delay_spread_us", "echo_db",
                   "jammer", "sir_db", "jam_offset_khz", "duty")
 RECEIVER_FIELDS = ("equalizer", "eq_taps", "pilot_window")
+FEC_FIELDS = ("fec", "fec_decoding", "interleave")
 AMC_FIELDS = ("adaptive", "amc_policy", "target_per", "snr_swing_db", "swing_period")
 BAND_FIELDS = ("band", "band_policy", "harm_weight", "sensing")
 LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps", *CHANNEL_FIELDS, *RECEIVER_FIELDS, *AMC_FIELDS,
-               *BAND_FIELDS}
+               *BAND_FIELDS, *FEC_FIELDS}
 BAND_HISTORY = 48               # slots shown in the dashboard's occupancy grid
 RESET_FIELDS = {"source", "text", "image_size", "gray", "seed", "max_payload"}  # need a restart
 MAX_TEXT_CHARS = 4000
@@ -85,6 +87,10 @@ class EngineConfig:
     equalizer: str = "none"         # "none" or "ls" (preamble-trained, for multipath)
     eq_taps: int = 7
     pilot_window: int = 7           # pilots averaged per channel estimate
+    # forward error correction (fec.py): convolutional code K=7, punctured; off by default
+    fec: str = "none"               # "none", "1/2", "2/3", "3/4"
+    fec_decoding: str = "soft"      # "soft" (LLRs, local noise), "soft_fixed" (preamble noise only) or "hard"
+    interleave: bool = True         # spread each packet's coded bits so bursts of errors get split up
     # link adaptation (adaptation.LinkAdapter) and a slowly swinging SNR to exercise it
     adaptive: bool = False          # True: the modulation is chosen per packet from receiver feedback
     amc_policy: str = "olla"        # "threshold" (table only) or "olla" (table + learned offset)
@@ -108,6 +114,9 @@ class EngineConfig:
             raise ValueError(f"band_policy must be one of {sel.POLICIES}")
         if self.sensing not in sel.SENSING:
             raise ValueError(f"sensing must be one of {tuple(sel.SENSING)}")
+        fec.check_code(self.fec)
+        if self.fec_decoding not in fec.DECODINGS:
+            raise ValueError(f"fec_decoding must be one of {fec.DECODINGS}")
         if self.equalizer not in ("none", "ls"):
             raise ValueError("equalizer must be 'none' or 'ls'")
         self.channel()                                   # checks fading / multipath / jammer names
@@ -131,7 +140,8 @@ class EngineConfig:
                        adaptive=bool(self.adaptive), target_per=float(np.clip(self.target_per, 0.01, 0.5)),
                        snr_swing_db=float(np.clip(self.snr_swing_db, 0, 20)),
                        swing_period=int(np.clip(self.swing_period, 4, 2000)),
-                       band=bool(self.band), harm_weight=float(np.clip(self.harm_weight, 0, 10)))
+                       band=bool(self.band), harm_weight=float(np.clip(self.harm_weight, 0, 10)),
+                       interleave=bool(self.interleave))
 
     def channel(self) -> chm.ChannelConfig:
         """The channel impairments as a ChannelConfig (raises ValueError on an unknown model)."""
@@ -302,7 +312,8 @@ class LinkEngine:
         pkt = self.packets[k]
         snr = self.snr_for(k)
         phy = dict(max_payload=c.max_payload, cfo=c.cfo, keep_corrupted=c.tolerant, channel=c.channel(),
-                   equalizer=c.equalizer, eq_taps=c.eq_taps, pilot_window=c.pilot_window, sample_rate_hz=c.sample_rate_hz)
+                   equalizer=c.equalizer, eq_taps=c.eq_taps, pilot_window=c.pilot_window, sample_rate_hz=c.sample_rate_hz,
+                   code=c.fec, decoding=c.fec_decoding, interleave=c.interleave)
         t0 = time.perf_counter()
         if c.band:
             # the policy picks the channel; SNR = set SNR + that channel's offset; if its licensed
@@ -433,7 +444,8 @@ class LinkEngine:
         off = len(self.records) - len(recs)
         out["history"] = [{"i": off + j, "seq": r.seq, "mod": r.mod, "snr_set": self.snr_set[off + j],
                            "snr_est": _num(r.snr_est_db), "outcome": self.outcomes[off + j],
-                           "bit_errors": r.bit_errors, "n_bits": r.n_bits,
+                           "bit_errors": r.bit_errors, "n_bits": r.n_bits, "code": r.code,
+                           "channel_bit_errors": r.channel_bit_errors, "n_channel_bits": r.n_channel_bits,
                            "process_ms": round(self.process_ms[off + j], 2),
                            "airtime_ms": round(1e3 * r.n_samples / c.sample_rate_hz, 3),
                            "ch": self.channels[off + j], "collided": self.collided[off + j]}
@@ -450,7 +462,8 @@ class LinkEngine:
             out["last"] = {"seq": v.seq, "outcome": v.outcome, "mod": v.record.mod,
                            "snr_set_db": v.snr_set_db, "snr_est_db": _num(v.record.snr_est_db),
                            "cfo_est": _num(v.record.cfo_est), "sync_metric": round(v.sync_metric, 3),
-                           "bit_errors": v.record.bit_errors, "n_bits": v.record.n_bits,
+                           "bit_errors": v.record.bit_errors, "n_bits": v.record.n_bits, "code": v.record.code,
+                           "channel_bit_errors": v.record.channel_bit_errors, "n_channel_bits": v.record.n_channel_bits,
                            "process_ms": round(v.process_ms, 2), "airtime_ms": round(v.airtime_ms, 3),
                            "constellation": np.round(np.c_[v.constellation.real, v.constellation.imag], 4).tolist(),
                            "psd": {"f_khz": np.round(v.psd_freq_khz, 2).tolist(),
