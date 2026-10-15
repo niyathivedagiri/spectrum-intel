@@ -270,6 +270,39 @@ ones (GFSK, AM, FM). An exploratory run came first; the reported numbers come fr
   synthetic; only the baseline CNN is evaluated (not the Doppler-trained one); no retraining was done on purpose,
   so the original validated classifier and its results are unchanged.
 
+**Phase 10 (done): end-to-end LEO satellite link.** The packet link (Phases 1–9) now flies through a satellite
+pass (`leo_link.py`): a ground transmitter (23 dBm) to a satellite at 550 km (30 dBi antenna), 2 GHz, 1 MHz
+channel. Every packet gets the SNR of the link budget at that moment (0.4 → 10.7 → 0.4 dB in an overhead pass)
+and the frequency offset left after Doppler handling (Doppler ±46 kHz). Passes of any peak elevation
+(`leo.general_pass`; the original overhead pass is unchanged). New: **adaptive modulation and coding** (`MCSAdapter`)
+chooses modulation *and* FEC code per packet from a table built from the Phase 8 measurements
+(`scripts/calibrate_mcs_table.py`, no new numbers). In the dashboard: Satellite pass → on (a time-lapse:
+each packet moves the pass on by 0.5–8 s), and Error correction → AUTO.
+
+| Measured (`exp_leo_link.py`, 8 packets every 4 s of pass, 3 seeds) | Result |
+|---|---|
+| Receiver alone, frequency offset it tolerates (QPSK, 8 dB) | about ±6 kHz (works at 6 kHz, fails at 10 kHz) |
+| Doppler handling, overhead pass: none / blind search / predicted from orbit / predicted + narrow search | 0.7 / 11.5 / 11.5 / 11.4 MB per pass |
+| Same, CPU per packet | 10 / 82 / 10 / 27 ms |
+| Ground oscillator ±5 ppm instead of ±2 ppm: predicted / predicted + narrow search | 0.03 / 11.5 MB (8 kHz left > what the receiver tolerates) |
+| Data per overhead pass, fixed: BPSK ½ / QPSK ½ / QPSK / 16-QAM ¾ / 16-QAM | 2.85 / 5.22 / 8.44 / 9.76 / 4.34 MB |
+| Adaptive modulation only / adaptive modulation **and** coding | 9.59 / **11.52** MB |
+| Peak elevation 90° / 60° / 30° / 15° (pass 7.9 / 7.8 / 6.9 / 4.6 min), adaptive mod + coding | 11.5 / 11.0 / 9.4 / 5.3 MB |
+| 10 dB weaker transmitter (13 dBm): best fixed (QPSK ½) / adaptive modulation / adaptive mod + coding | 2.83 / 1.51 / **3.81** MB |
+
+- **Doppler must be handled, and predicting it is cheapest.** Without it the link only works for the ~20 s near
+  the top of the pass (5% of the time). A blind search recovers everything at 8× the processing; predicting the
+  Doppler from the orbit (what ground stations do with orbital elements) costs nothing extra. What it leaves is the
+  oscillator error: fine at ±2 ppm, fatal at ±5 ppm, where adding a narrow ±12 kHz search fixes it at 2.7×.
+- **Adaptation pays most when it can also change the code.** Modulation-only adaptation (9.59 MB) loses to a fixed
+  16-QAM ¾ (9.76 MB); adding the code choice gives 11.52 MB (+20%). With a weak transmitter, modulation-only
+  adaptation (1.51 MB) is even worse than a fixed robust code (2.83 MB): without coding it has nothing that works
+  below about 0 dB. Coding, not modulation, decides what a weak link delivers.
+- **Doppler rate is not a problem within a packet:** at most 642 Hz/s, i.e. under 4 Hz over a 6 ms packet.
+- **Limitations.** Circular orbit, Earth's rotation ignored, no atmosphere/rain/pointing losses, clear line of sight
+  (no fading); SGP4 with real orbital elements (optional in the plan) was not added; time is sampled every 4 s
+  (each burst stands for 4 s); the MCS table comes from AWGN with 120 packets per point.
+
 ```bash
 python scripts/dashboard.py                                                    # opens http://127.0.0.1:8765
 python scripts/dashboard.py --source image --snr 3                            # the sample photo
@@ -280,6 +313,8 @@ python scripts/exp_adaptation.py                                               #
 python scripts/exp_channel_selection.py                                        # which channel to use (~4.5 min)
 python scripts/exp_fec.py                                                      # error correction (~4.5 min, 2 cores)
 python scripts/exp_openset.py                                                  # unknown-signal detection (~30 s)
+python scripts/calibrate_mcs_table.py                                          # MCS table from the FEC run (instant)
+python scripts/exp_leo_link.py                                                 # the link through a satellite pass (~6 min, 2 cores)
 python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
@@ -316,15 +351,17 @@ spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupan
                   payload, coding, packet, modulation, transmitter, channel, receiver, link,
                   metrics, experiments, engine, dashboard (+ web/dashboard.html), adaptation (+ link_table.json), selection, fec   (communication link)
                   openset   (unknown-signal detection on top of the classifier)
+                  leo_link (+ mcs_table.json)   (the packet link through a satellite pass)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
                   demo_image_link, exp_image_link, exp_link_metrics,
-                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation, exp_channel_selection, exp_fec, exp_openset
+                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation, exp_channel_selection, exp_fec, exp_openset,
+                  calibrate_mcs_table, exp_leo_link
 models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each);
                   openset_baseline.npz (open-set statistics, recreated by exp_openset.py)
 docs/             dashboard screenshot
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            206 automated checks
+tests/            213 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -333,7 +370,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 206 checks
+python -m pytest                    # 213 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
