@@ -1,0 +1,8 @@
+part,scheme,delivered_MB
+weak,bpsk/1/2,1.6065330363771344
+weak,qpsk/1/2,2.829931972789116
+weak,qpsk/none,0.5339805825242718
+weak,qam16/3/4,0.0489296636085627
+weak,qam16/none,0.0
+weak,adaptive,1.514115447817216
+weak,mcs,3.8110433988420835

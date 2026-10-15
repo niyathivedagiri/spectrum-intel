@@ -1,0 +1,32 @@
+{
+  "experiment": "leo_link",
+  "seed": 0,
+  "created": "20261015-160419",
+  "config": {
+    "base": {
+      "altitude_m": 550000.0,
+      "max_elevation_deg": 90.0,
+      "min_elevation_deg": 10.0,
+      "carrier_hz": 2000000000.0,
+      "eirp_dbm": 23.0,
+      "rx_gain_dbi": 30.0,
+      "noise_figure_db": 3.0,
+      "doppler": "predicted",
+      "osc_ppm": 2.0,
+      "timing_error_s": 0.5,
+      "scheme": "mcs",
+      "dt_s": 4.0,
+      "packets_per_step": 8,
+      "seed": 0
+    },
+    "seeds": [
+      0,
+      1,
+      2
+    ]
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}

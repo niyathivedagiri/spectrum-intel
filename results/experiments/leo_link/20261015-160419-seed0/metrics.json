@@ -1,0 +1,202 @@
+{
+  "pass": {
+    "minutes": 7.933333333333334,
+    "snr_db": [
+      0.3544146107364554,
+      10.721946139746649
+    ],
+    "max_doppler_khz": 45.89665830721158,
+    "max_doppler_rate_hz_s": 641.628266468302,
+    "doppler_change_in_one_packet_hz": 3.8497695988098117
+  },
+  "doppler": {
+    "none @ 2 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 0.6987732759884656,
+      "link_up_fraction": 0.05,
+      "mean_goodput_kbps": 11.646221266474429,
+      "packet_delivery": 0.05,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 49.01456863743665,
+      "search_range_khz": 0.0,
+      "cpu_ms_per_packet": 10.472354630208335
+    },
+    "none @ 5 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 0.6794033052166258,
+      "link_up_fraction": 0.05,
+      "mean_goodput_kbps": 11.323388420277096,
+      "packet_delivery": 0.04895833333333333,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 53.69143413277427,
+      "search_range_khz": 0.0,
+      "cpu_ms_per_packet": 10.316015560416666
+    },
+    "search @ 2 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 11.519352274939841,
+      "link_up_fraction": 1.0,
+      "mean_goodput_kbps": 191.98920458233067,
+      "packet_delivery": 0.9541666666666667,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 49.01456863743665,
+      "search_range_khz": 54.886324137932746,
+      "cpu_ms_per_packet": 81.54373618229167
+    },
+    "search @ 5 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 11.41138484446634,
+      "link_up_fraction": 1.0,
+      "mean_goodput_kbps": 190.18974740777233,
+      "packet_delivery": 0.9489583333333333,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 53.69143413277427,
+      "search_range_khz": 61.48632413793275,
+      "cpu_ms_per_packet": 88.35774551458333
+    },
+    "predicted @ 2 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 11.50057120847428,
+      "link_up_fraction": 1.0,
+      "mean_goodput_kbps": 191.67618680790468,
+      "packet_delivery": 0.9604166666666667,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 3.4393254823795796,
+      "search_range_khz": 0.0,
+      "cpu_ms_per_packet": 10.052902498958344
+    },
+    "predicted @ 5 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 0.02989630929020226,
+      "link_up_fraction": 0.06666666666666667,
+      "mean_goodput_kbps": 0.498271821503371,
+      "packet_delivery": 0.009375,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 8.11619097771719,
+      "search_range_khz": 0.0,
+      "cpu_ms_per_packet": 10.704863646874996
+    },
+    "predicted+search @ 2 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 11.426314067784952,
+      "link_up_fraction": 1.0,
+      "mean_goodput_kbps": 190.43856779641587,
+      "packet_delivery": 0.9541666666666667,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 3.4393254823795796,
+      "search_range_khz": 12.0,
+      "cpu_ms_per_packet": 27.066435577083325
+    },
+    "predicted+search @ 5 ppm": {
+      "pass_s": 480.0,
+      "delivered_MB": 11.544267751692736,
+      "link_up_fraction": 1.0,
+      "mean_goodput_kbps": 192.40446252821226,
+      "packet_delivery": 0.9614583333333333,
+      "max_doppler_khz": 45.89665830721158,
+      "max_residual_cfo_khz": 8.11619097771719,
+      "search_range_khz": 12.0,
+      "cpu_ms_per_packet": 27.511874528124984
+    }
+  },
+  "schemes": {
+    "bpsk/1/2": {
+      "delivered_MB": [
+        2.8507795100222713,
+        0.0
+      ],
+      "link_up_fraction": 1.0
+    },
+    "qpsk/1/2": {
+      "delivered_MB": [
+        5.224489795918367,
+        0.0
+      ],
+      "link_up_fraction": 1.0
+    },
+    "qpsk/none": {
+      "delivered_MB": [
+        8.44012944983819,
+        0.051577273302618666
+      ],
+      "link_up_fraction": 0.9972222222222222
+    },
+    "qam16/3/4": {
+      "delivered_MB": [
+        9.761467889908259,
+        0.07540567587729685
+      ],
+      "link_up_fraction": 0.9499999999999998
+    },
+    "qam16/none": {
+      "delivered_MB": [
+        4.339768339768338,
+        0.057786214467551104
+      ],
+      "link_up_fraction": 0.41944444444444445
+    },
+    "adaptive": {
+      "delivered_MB": [
+        9.59275086708645,
+        0.05550789716710905
+      ],
+      "link_up_fraction": 1.0
+    },
+    "mcs": {
+      "delivered_MB": [
+        11.52125215902241,
+        0.07009125740611154
+      ],
+      "link_up_fraction": 1.0
+    }
+  },
+  "elevation": {
+    "max_elevation_deg": [
+      90.0,
+      60.0,
+      30.0,
+      15.0
+    ],
+    "delivered_MB": {
+      "qpsk/1/2": [
+        5.224489795918367,
+        5.1374149659863955,
+        4.571428571428572,
+        3.0458049886621317
+      ],
+      "adaptive": [
+        9.59275086708645,
+        8.95609441943134,
+        7.227627193371853,
+        3.6371193302412475
+      ],
+      "mcs": [
+        11.52125215902241,
+        10.948556712223118,
+        9.412739256533344,
+        5.27009606710522
+      ]
+    },
+    "pass_minutes": [
+      7.933333333333334,
+      7.8,
+      6.933333333333334,
+      4.6
+    ]
+  },
+  "weak_transmitter_13dBm": {
+    "delivered_MB": {
+      "bpsk/1/2": 1.6065330363771344,
+      "qpsk/1/2": 2.829931972789116,
+      "qpsk/none": 0.5339805825242718,
+      "qam16/3/4": 0.0489296636085627,
+      "qam16/none": 0.0,
+      "adaptive": 1.514115447817216,
+      "mcs": 3.8110433988420835
+    },
+    "snr_db": [
+      -9.645585389263545,
+      0.7219461397466489
+    ]
+  }
+}
