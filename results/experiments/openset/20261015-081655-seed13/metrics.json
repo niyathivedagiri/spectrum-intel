@@ -1,0 +1,457 @@
+{
+  "thresholds": {
+    "msp": 0.6167115569114685,
+    "max_logit": 3.080094337463379,
+    "energy": 3.3858859539031982,
+    "mahalanobis": -107.923828125,
+    "knn": -0.33495885133743286
+  },
+  "scores": {
+    "msp": {
+      "auroc_all": 0.6419501543209877,
+      "auroc_snr_ge_0": 0.6603544116702011,
+      "known_accepted_test": 0.9483333333333334,
+      "unknown_accepted_snr_ge_0": 0.9838056680161943,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 1.0,
+        "gfsk": 0.9444444444444444,
+        "am": 0.96,
+        "fm": 1.0
+      }
+    },
+    "max_logit": {
+      "auroc_all": 0.568716049382716,
+      "auroc_snr_ge_0": 0.5792802519118309,
+      "known_accepted_test": 0.9572222222222222,
+      "unknown_accepted_snr_ge_0": 0.9983805668016195,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 0.9906542056074766,
+        "gfsk": 1.0,
+        "am": 1.0,
+        "fm": 1.0
+      }
+    },
+    "energy": {
+      "auroc_all": 0.5672308641975309,
+      "auroc_snr_ge_0": 0.5780631064841592,
+      "known_accepted_test": 0.9583333333333334,
+      "unknown_accepted_snr_ge_0": 0.9983805668016195,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 0.9906542056074766,
+        "gfsk": 1.0,
+        "am": 1.0,
+        "fm": 1.0
+      }
+    },
+    "mahalanobis": {
+      "auroc_all": 0.7221623456790124,
+      "auroc_snr_ge_0": 0.7563569179358653,
+      "known_accepted_test": 0.9433333333333334,
+      "unknown_accepted_snr_ge_0": 0.4089068825910931,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 0.4766355140186916,
+        "gfsk": 0.0,
+        "am": 0.0,
+        "fm": 0.0
+      }
+    },
+    "knn": {
+      "auroc_all": 0.7622351851851852,
+      "auroc_snr_ge_0": 0.7770554591607223,
+      "known_accepted_test": 0.9594444444444444,
+      "unknown_accepted_snr_ge_0": 0.5854251012145749,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 0.4953271028037383,
+        "gfsk": 0.15151515151515152,
+        "am": 0.0,
+        "fm": 0.9435897435897436
+      }
+    }
+  },
+  "closed_set_labels_of_unknowns": {
+    "8psk": {
+      "bpsk": 0.0,
+      "qpsk": 1.0,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.0
+    },
+    "64qam": {
+      "bpsk": 0.0,
+      "qpsk": 0.0,
+      "qam16": 1.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.0
+    },
+    "ofdm_wide": {
+      "bpsk": 0.0,
+      "qpsk": 0.0,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 1.0
+    },
+    "gfsk": {
+      "bpsk": 0.0,
+      "qpsk": 0.101,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.899
+    },
+    "am": {
+      "bpsk": 0.164,
+      "qpsk": 0.0,
+      "qam16": 0.013,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.822
+    },
+    "fm": {
+      "bpsk": 0.0,
+      "qpsk": 0.005,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.995
+    }
+  },
+  "open_set_labels_of_unknowns": {
+    "8psk": {
+      "bpsk": 0.0,
+      "qpsk": 1.0,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.0,
+      "unknown": 0.0
+    },
+    "64qam": {
+      "bpsk": 0.0,
+      "qpsk": 0.0,
+      "qam16": 1.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.0,
+      "unknown": 0.0
+    },
+    "ofdm_wide": {
+      "bpsk": 0.0,
+      "qpsk": 0.0,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.477,
+      "unknown": 0.523
+    },
+    "gfsk": {
+      "bpsk": 0.0,
+      "qpsk": 0.0,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.0,
+      "unknown": 1.0
+    },
+    "am": {
+      "bpsk": 0.0,
+      "qpsk": 0.0,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.0,
+      "unknown": 1.0
+    },
+    "fm": {
+      "bpsk": 0.0,
+      "qpsk": 0.0,
+      "qam16": 0.0,
+      "ofdm": 0.0,
+      "noise": 0.0,
+      "interference": 0.0,
+      "unknown": 1.0
+    }
+  },
+  "snr": {
+    "unknowns_accepted_at_le_minus6dB_labels": {
+      "8psk": {
+        "bpsk": 1,
+        "qpsk": 31,
+        "qam16": 22,
+        "ofdm": 4,
+        "noise": 0,
+        "interference": 1
+      },
+      "64qam": {
+        "bpsk": 1,
+        "qpsk": 17,
+        "qam16": 34,
+        "ofdm": 3,
+        "noise": 1,
+        "interference": 0
+      },
+      "ofdm_wide": {
+        "bpsk": 0,
+        "qpsk": 0,
+        "qam16": 0,
+        "ofdm": 0,
+        "noise": 46,
+        "interference": 10
+      },
+      "gfsk": {
+        "bpsk": 1,
+        "qpsk": 33,
+        "qam16": 16,
+        "ofdm": 0,
+        "noise": 0,
+        "interference": 1
+      },
+      "am": {
+        "bpsk": 3,
+        "qpsk": 0,
+        "qam16": 0,
+        "ofdm": 0,
+        "noise": 0,
+        "interference": 1
+      },
+      "fm": {
+        "bpsk": 0,
+        "qpsk": 21,
+        "qam16": 17,
+        "ofdm": 0,
+        "noise": 2,
+        "interference": 4
+      }
+    },
+    "rejected_known_by_class": {
+      "bpsk": 27,
+      "qpsk": 2,
+      "qam16": 1,
+      "ofdm": 4,
+      "noise": 0,
+      "interference": 68
+    },
+    "snr_db": [
+      -10.0,
+      -8.0,
+      -6.0,
+      -4.0,
+      -2.0,
+      0.0,
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0,
+      12.0,
+      14.0,
+      16.0,
+      18.0,
+      20.0
+    ],
+    "known_kept": [
+      0.9795918367346939,
+      0.981651376146789,
+      0.9830508474576272,
+      0.9459459459459459,
+      0.9711538461538461,
+      0.9411764705882353,
+      0.9646017699115044,
+      0.9407407407407408,
+      0.9477611940298507,
+      0.9252336448598131,
+      0.926605504587156,
+      0.9256198347107438,
+      0.9032258064516129,
+      0.9339622641509434,
+      0.8934426229508197,
+      0.9306930693069307
+    ],
+    "known_accuracy_if_kept": [
+      0.5833333333333334,
+      0.7383177570093458,
+      0.8103448275862069,
+      0.9428571428571428,
+      0.9900990099009901,
+      0.9821428571428571,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.9910714285714286,
+      1.0,
+      0.98989898989899,
+      1.0,
+      1.0
+    ],
+    "far_unknown_rejected": [
+      0.22950819672131148,
+      0.22727272727272727,
+      0.6086956521739131,
+      0.6571428571428571,
+      0.9180327868852459,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "near_unknown_rejected": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.03508771929824561,
+      0.0425531914893617,
+      0.13636363636363635,
+      0.16666666666666666,
+      0.21153846153846154,
+      0.21818181818181817,
+      0.2222222222222222,
+      0.2037037037037037,
+      0.32857142857142857,
+      0.3380281690140845
+    ],
+    "far_unknowns_at_le_minus6dB_called_noise": 0.013245033112582781,
+    "share_of_rejected_known_below_0dB": 0.14705882352941177
+  },
+  "other_features": {
+    "conv block 1, Mahalanobis": {
+      "auroc_snr_ge_0": 0.6027825975194396,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 0.7242990654205608,
+        "gfsk": 0.9949494949494949,
+        "am": 0.0,
+        "fm": 0.8102564102564103
+      }
+    },
+    "conv block 2, Mahalanobis": {
+      "auroc_snr_ge_0": 0.6923154038943513,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 1.0,
+        "gfsk": 0.6313131313131313,
+        "am": 0.0,
+        "fm": 0.7692307692307693
+      }
+    },
+    "conv block 3, Mahalanobis": {
+      "auroc_snr_ge_0": 0.7227035537561853,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 1.0,
+        "gfsk": 0.5404040404040404,
+        "am": 0.0,
+        "fm": 0.6307692307692307
+      }
+    },
+    "conv block 4, Mahalanobis": {
+      "auroc_snr_ge_0": 0.725652593021014,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 1.0,
+        "64qam": 1.0,
+        "ofdm_wide": 1.0,
+        "gfsk": 0.1919191919191919,
+        "am": 0.0,
+        "fm": 0.28717948717948716
+      }
+    },
+    "cumulant statistics, per-class Gaussian": {
+      "auroc_snr_ge_0": 0.7922884133410449,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 0.6069651741293532,
+        "64qam": 0.9356435643564357,
+        "ofdm_wide": 0.897196261682243,
+        "gfsk": 0.494949494949495,
+        "am": 0.26666666666666666,
+        "fm": 0.5641025641025641
+      }
+    },
+    "CNN Mahalanobis AND cumulants (both must accept)": {
+      "auroc_snr_ge_0": 0.8263369963369963,
+      "accepted_by_kind_snr_ge_0": {
+        "8psk": 0.7412935323383084,
+        "64qam": 0.9801980198019802,
+        "ofdm_wide": 0.822429906542056,
+        "gfsk": 0.030303030303030304,
+        "am": 0.0,
+        "fm": 0.11794871794871795
+      }
+    }
+  },
+  "band_example": [
+    {
+      "channel": 0,
+      "true": "qpsk",
+      "closed_set": "qpsk",
+      "open_set": "qpsk"
+    },
+    {
+      "channel": 1,
+      "true": "gfsk",
+      "closed_set": "interference",
+      "open_set": "UNKNOWN"
+    },
+    {
+      "channel": 2,
+      "true": "ofdm",
+      "closed_set": "ofdm",
+      "open_set": "ofdm"
+    },
+    {
+      "channel": 3,
+      "true": "fm",
+      "closed_set": "interference",
+      "open_set": "UNKNOWN"
+    },
+    {
+      "channel": 4,
+      "true": "8psk",
+      "closed_set": "qpsk",
+      "open_set": "qpsk"
+    },
+    {
+      "channel": 5,
+      "true": "qam16",
+      "closed_set": "qam16",
+      "open_set": "qam16"
+    },
+    {
+      "channel": 6,
+      "true": "am",
+      "closed_set": "bpsk",
+      "open_set": "UNKNOWN"
+    },
+    {
+      "channel": 7,
+      "true": "noise",
+      "closed_set": "noise",
+      "open_set": "noise"
+    }
+  ]
+}

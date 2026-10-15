@@ -1,0 +1,45 @@
+{
+  "experiment": "openset",
+  "seed": 13,
+  "created": "20261015-081655",
+  "config": {
+    "model": "models/cnn_baseline.pt",
+    "fit": "300/class, seed 0",
+    "validation": "200/class, seed 12",
+    "test_known": "300/class, seed 11",
+    "test_unknown": "300/type, seed 13",
+    "target_tpr": 0.95,
+    "unknown_near": [
+      "8psk",
+      "64qam",
+      "ofdm_wide"
+    ],
+    "unknown_far": [
+      "gfsk",
+      "am",
+      "fm"
+    ],
+    "snr_db": [
+      -10,
+      -8,
+      -6,
+      -4,
+      -2,
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20
+    ]
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "2.4.4"
+  }
+}

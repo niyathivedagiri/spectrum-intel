@@ -1,0 +1,37 @@
+part,score,kind,accepted_snr_ge_0
+other_features,"conv block 1, Mahalanobis",8psk,1.0
+other_features,"conv block 1, Mahalanobis",64qam,1.0
+other_features,"conv block 1, Mahalanobis",ofdm_wide,0.7242990654205608
+other_features,"conv block 1, Mahalanobis",gfsk,0.9949494949494949
+other_features,"conv block 1, Mahalanobis",am,0.0
+other_features,"conv block 1, Mahalanobis",fm,0.8102564102564103
+other_features,"conv block 2, Mahalanobis",8psk,1.0
+other_features,"conv block 2, Mahalanobis",64qam,1.0
+other_features,"conv block 2, Mahalanobis",ofdm_wide,1.0
+other_features,"conv block 2, Mahalanobis",gfsk,0.6313131313131313
+other_features,"conv block 2, Mahalanobis",am,0.0
+other_features,"conv block 2, Mahalanobis",fm,0.7692307692307693
+other_features,"conv block 3, Mahalanobis",8psk,1.0
+other_features,"conv block 3, Mahalanobis",64qam,1.0
+other_features,"conv block 3, Mahalanobis",ofdm_wide,1.0
+other_features,"conv block 3, Mahalanobis",gfsk,0.5404040404040404
+other_features,"conv block 3, Mahalanobis",am,0.0
+other_features,"conv block 3, Mahalanobis",fm,0.6307692307692307
+other_features,"conv block 4, Mahalanobis",8psk,1.0
+other_features,"conv block 4, Mahalanobis",64qam,1.0
+other_features,"conv block 4, Mahalanobis",ofdm_wide,1.0
+other_features,"conv block 4, Mahalanobis",gfsk,0.1919191919191919
+other_features,"conv block 4, Mahalanobis",am,0.0
+other_features,"conv block 4, Mahalanobis",fm,0.28717948717948716
+other_features,"cumulant statistics, per-class Gaussian",8psk,0.6069651741293532
+other_features,"cumulant statistics, per-class Gaussian",64qam,0.9356435643564357
+other_features,"cumulant statistics, per-class Gaussian",ofdm_wide,0.897196261682243
+other_features,"cumulant statistics, per-class Gaussian",gfsk,0.494949494949495
+other_features,"cumulant statistics, per-class Gaussian",am,0.26666666666666666
+other_features,"cumulant statistics, per-class Gaussian",fm,0.5641025641025641
+other_features,CNN Mahalanobis AND cumulants (both must accept),8psk,0.7412935323383084
+other_features,CNN Mahalanobis AND cumulants (both must accept),64qam,0.9801980198019802
+other_features,CNN Mahalanobis AND cumulants (both must accept),ofdm_wide,0.822429906542056
+other_features,CNN Mahalanobis AND cumulants (both must accept),gfsk,0.030303030303030304
+other_features,CNN Mahalanobis AND cumulants (both must accept),am,0.0
+other_features,CNN Mahalanobis AND cumulants (both must accept),fm,0.11794871794871795
