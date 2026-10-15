@@ -20,6 +20,10 @@ Policies
                a faster modulation is worth some lost packets if it delivers more overall.
 If no usable feedback exists yet (start, or the last frame was not even detected), the most
 robust modulation is used.
+
+MCSAdapter (adaptive modulation AND coding): the same goodput rule over all 12 pairs of
+modulation (BPSK/QPSK/16-QAM) and FEC code (none, 1/2, 2/3, 3/4), from mcs_table.json, which
+holds the packet error rates measured in the FEC experiment (scripts/calibrate_mcs_table.py).
 """
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ import numpy as np
 from spectrum_intel.modulation import LINK_MODULATIONS, bits_per_symbol
 
 TABLE_PATH = Path(__file__).resolve().parent / "link_table.json"
+MCS_TABLE_PATH = Path(__file__).resolve().parent / "mcs_table.json"
 POLICIES = ("threshold", "olla", "goodput")
 
 
@@ -123,11 +128,11 @@ class LinkAdapter:
                 "next": self.choose()}
 
 
-def data_rate_bps(mod: str, packet_bytes: int = 64, sample_rate_hz: float = 1e6) -> float:
+def data_rate_bps(mod: str, packet_bytes: int = 64, sample_rate_hz: float = 1e6, code: str = "none") -> float:
     """User data bits per second of airtime for one packet of `packet_bytes` (all overheads included)."""
     from spectrum_intel.packet import Packet
     from spectrum_intel.transmitter import build_frame
-    frame = build_frame(Packet(0, 1, bytes(packet_bytes)).to_bytes(), mod)
+    frame = build_frame(Packet(0, 1, bytes(packet_bytes)).to_bytes(), mod, code)
     return 8 * packet_bytes * sample_rate_hz / len(frame.iq)
 
 
@@ -142,3 +147,60 @@ def slow_fading_snr(n: int, mean_snr_db: float, doppler_hz: float, slot_s: float
     from spectrum_intel.channel import fading_process
     g = fading_process(n, doppler_hz, 1.0 / slot_s, rng)
     return mean_snr_db + 20 * np.log10(np.maximum(np.abs(g), 1e-4))
+
+
+# --------------------------------------------------------------------------
+# Adaptive modulation AND coding
+# --------------------------------------------------------------------------
+def scheme_name(mod: str, code: str) -> str:
+    return f"{mod}/{code}"
+
+
+def load_mcs_table(path: Path = MCS_TABLE_PATH) -> dict:
+    """{"snr_db": [...], "per": {"qpsk/1/2": [...], ...}, "meta": {...}}"""
+    return json.loads(Path(path).read_text())
+
+
+@dataclass
+class MCSAdapter:
+    """Chooses (modulation, code) for the next packet: highest expected goodput at the reported SNR.
+
+    margin_db is subtracted from the reported SNR first (a fixed safety margin; 0 = trust the table).
+    """
+    margin_db: float = 0.0
+    table: dict = None
+    snr_fb: float | None = None
+    history: list = field(default_factory=list)
+
+    def __post_init__(self):
+        from spectrum_intel.fec import CODES
+        self.table = self.table or load_mcs_table()
+        self.schemes = [(m, c) for m in LINK_MODULATIONS for c in CODES if scheme_name(m, c) in self.table["per"]]
+        pb = int(self.table.get("meta", {}).get("packet_bytes", 64))
+        self.rate_bps = {s: data_rate_bps(s[0], pb, code=s[1]) for s in self.schemes}
+        self.robust = min(self.schemes, key=lambda s: self.rate_bps[s])
+
+    def expected_goodput(self, snr_db: float) -> dict:
+        return {s: self.rate_bps[s] * (1 - float(np.interp(snr_db, self.table["snr_db"],
+                                                            self.table["per"][scheme_name(*s)])))
+                for s in self.schemes}
+
+    def choose(self, snr_override: float | None = None) -> tuple[str, str]:
+        snr = snr_override if snr_override is not None else (None if self.snr_fb is None else self.snr_fb - self.margin_db)
+        if snr is None:
+            return self.robust
+        eg = self.expected_goodput(snr)
+        return max(self.schemes, key=lambda s: (eg[s], -self.rate_bps[s]))   # ties -> slower, more robust
+
+    def update(self, record) -> None:
+        snr = getattr(record, "snr_est_db", None)
+        detected = bool(getattr(record, "detected", False))
+        self.snr_fb = float(snr) if detected and snr is not None and np.isfinite(snr) else None
+        self.history.append({"scheme": scheme_name(record.mod, getattr(record, "code", "none")),
+                             "ack": bool(record.crc_ok), "snr_fb": self.snr_fb})
+
+    def summary(self) -> dict:
+        m, c = self.choose()
+        return {"policy": "mcs", "margin_db": self.margin_db, "offset_db": 0.0,
+                "snr_feedback_db": None if self.snr_fb is None else round(self.snr_fb, 3),
+                "next": m, "next_code": c}
