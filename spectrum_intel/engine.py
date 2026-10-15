@@ -13,6 +13,10 @@ packets, bit errors and received bytes for the same seed. What it adds:
   - optional band mode: the link lives in an 8-channel band shared with licensed users
     and a channel-selection policy (selection.py) picks the channel for every packet.
     With band mode off (the default) nothing changes.
+  - optional LEO pass mode (leo_link.py): each packet moves the satellite pass on by
+    leo_s_per_packet seconds (a time-lapse); SNR follows the link budget and the frequency
+    offset follows the Doppler left after the chosen Doppler handling.
+  - FEC "auto": adaptive modulation AND coding (adaptation.MCSAdapter) picks both per packet.
 """
 from __future__ import annotations
 
@@ -26,7 +30,8 @@ import numpy as np
 
 from spectrum_intel import channel as chm
 from spectrum_intel import fec
-from spectrum_intel.adaptation import POLICIES, LinkAdapter
+from spectrum_intel import leo_link
+from spectrum_intel.adaptation import POLICIES, LinkAdapter, MCSAdapter
 from spectrum_intel import metrics as m
 from spectrum_intel import payload as pl
 from spectrum_intel import selection as sel
@@ -48,10 +53,12 @@ CHANNEL_FIELDS = ("fading", "k_factor_db", "doppler_hz", "multipath", "delay_spr
                   "jammer", "sir_db", "jam_offset_khz", "duty")
 RECEIVER_FIELDS = ("equalizer", "eq_taps", "pilot_window")
 FEC_FIELDS = ("fec", "fec_decoding", "interleave")
+LEO_FIELDS = ("leo", "leo_max_elev", "leo_doppler", "leo_s_per_packet")
+FEC_CHOICES = fec.CODES + ("auto",)
 AMC_FIELDS = ("adaptive", "amc_policy", "target_per", "snr_swing_db", "swing_period")
 BAND_FIELDS = ("band", "band_policy", "harm_weight", "sensing")
 LIVE_FIELDS = {"mod", "snr_db", "cfo", "tolerant", "rate_pps", *CHANNEL_FIELDS, *RECEIVER_FIELDS, *AMC_FIELDS,
-               *BAND_FIELDS, *FEC_FIELDS}
+               *BAND_FIELDS, *FEC_FIELDS, *LEO_FIELDS}
 BAND_HISTORY = 48               # slots shown in the dashboard's occupancy grid
 RESET_FIELDS = {"source", "text", "image_size", "gray", "seed", "max_payload"}  # need a restart
 MAX_TEXT_CHARS = 4000
@@ -88,7 +95,7 @@ class EngineConfig:
     eq_taps: int = 7
     pilot_window: int = 7           # pilots averaged per channel estimate
     # forward error correction (fec.py): convolutional code K=7, punctured; off by default
-    fec: str = "none"               # "none", "1/2", "2/3", "3/4"
+    fec: str = "none"               # "none", "1/2", "2/3", "3/4", or "auto" (modulation AND code adapted)
     fec_decoding: str = "soft"      # "soft" (LLRs, local noise), "soft_fixed" (preamble noise only) or "hard"
     interleave: bool = True         # spread each packet's coded bits so bursts of errors get split up
     # link adaptation (adaptation.LinkAdapter) and a slowly swinging SNR to exercise it
@@ -102,6 +109,11 @@ class EngineConfig:
     band_policy: str = "quality"    # random / hop / predict / quality / oracle
     harm_weight: float = 0.0        # quality/oracle only: penalty on the predicted chance of a collision
     sensing: str = "cnn"            # perfect / cnn / degraded / poor (detection and false-alarm rates)
+    # LEO pass mode (leo_link.py): SNR and frequency offset follow a satellite pass
+    leo: bool = False
+    leo_max_elev: float = 90.0      # highest elevation of the pass (deg)
+    leo_doppler: str = "predicted"  # none / search / predicted / predicted+search
+    leo_s_per_packet: float = 2.0   # pass time between packets (time-lapse)
 
     def validated(self) -> "EngineConfig":
         if self.source not in ("text", "image"):
@@ -114,7 +126,10 @@ class EngineConfig:
             raise ValueError(f"band_policy must be one of {sel.POLICIES}")
         if self.sensing not in sel.SENSING:
             raise ValueError(f"sensing must be one of {tuple(sel.SENSING)}")
-        fec.check_code(self.fec)
+        if self.fec not in FEC_CHOICES:
+            raise ValueError(f"fec must be one of {FEC_CHOICES}")
+        if self.leo_doppler not in leo_link.DOPPLER_MODES:
+            raise ValueError(f"leo_doppler must be one of {leo_link.DOPPLER_MODES}")
         if self.fec_decoding not in fec.DECODINGS:
             raise ValueError(f"fec_decoding must be one of {fec.DECODINGS}")
         if self.equalizer not in ("none", "ls"):
@@ -141,7 +156,9 @@ class EngineConfig:
                        snr_swing_db=float(np.clip(self.snr_swing_db, 0, 20)),
                        swing_period=int(np.clip(self.swing_period, 4, 2000)),
                        band=bool(self.band), harm_weight=float(np.clip(self.harm_weight, 0, 10)),
-                       interleave=bool(self.interleave))
+                       interleave=bool(self.interleave), leo=bool(self.leo),
+                       leo_max_elev=float(np.clip(self.leo_max_elev, 15, 90)),
+                       leo_s_per_packet=float(np.clip(self.leo_s_per_packet, 0.5, 20)))
 
     def channel(self) -> chm.ChannelConfig:
         """The channel impairments as a ChannelConfig (raises ValueError on an unknown model)."""
@@ -227,6 +244,10 @@ class LinkEngine:
         self.process_ms: list[float] = []
         self._good, self._rough = {}, {}
         self.adapter = LinkAdapter(c.amc_policy, c.target_per)
+        self.mcs = MCSAdapter()                       # used when fec == "auto"
+        self.codes: list[str] = []                    # FEC code used per packet
+        self.leo_t: list[float | None] = []           # pass time of each packet (LEO mode)
+        self._leo_cache = None
         self.bandlink: sel.BandLink | None = None     # created when band mode is first switched on
         self.channels: list[int | None] = []         # band channel used per packet (None outside band mode)
         self.collided: list[bool | None] = []        # whether that packet hit an active licensed user
@@ -289,9 +310,31 @@ class LinkEngine:
             self.bandlink = sel.BandLink(self._selector(c, band), band)
         return self.bandlink
 
-    def snr_for(self, k: int) -> float:
-        """SNR used for packet k (the set SNR, plus the optional slow swing)."""
+    # ---------------------------------------------------------------- LEO pass mode
+    def _leo(self) -> dict:
         c = self.config
+        key = (c.leo_max_elev, c.leo_doppler, c.seed)
+        if self._leo_cache is None or self._leo_cache["key"] != key:
+            cfg = leo_link.LEOLinkConfig(max_elevation_deg=c.leo_max_elev, doppler=c.leo_doppler, dt_s=1.0, seed=c.seed)
+            tl = leo_link.timeline(cfg)
+            cfo, search = leo_link.offsets(cfg, tl, np.random.default_rng([c.seed, 1]))
+            self._leo_cache = {"key": key, "tl": tl, "cfo": cfo, "search": search, "pass_s": float(tl["t_s"][-1])}
+        return self._leo_cache
+
+    def leo_at(self, k: int) -> dict:
+        """Pass state when packet k is sent (the pass repeats if the message is longer than it)."""
+        L = self._leo()
+        t = (k * self.config.leo_s_per_packet) % L["pass_s"]
+        f = lambda a: float(np.interp(t, L["tl"]["t_s"], a))
+        return {"t_s": t, "elev_deg": f(L["tl"]["elev_deg"]), "snr_db": f(L["tl"]["snr_db"]),
+                "doppler_khz": f(L["tl"]["doppler_hz"]) / 1e3, "cfo": f(L["cfo"]), "search": L["search"],
+                "range_km": f(L["tl"]["range_km"])}
+
+    def snr_for(self, k: int) -> float:
+        """SNR used for packet k (the set SNR, plus the optional slow swing; the pass in LEO mode)."""
+        c = self.config
+        if c.leo:
+            return self.leo_at(k)["snr_db"]
         return c.snr_db + c.snr_swing_db * float(np.sin(2 * np.pi * k / c.swing_period)) if c.snr_swing_db else c.snr_db
 
     # ---------------------------------------------------------------- running
@@ -314,17 +357,28 @@ class LinkEngine:
         phy = dict(max_payload=c.max_payload, cfo=c.cfo, keep_corrupted=c.tolerant, channel=c.channel(),
                    equalizer=c.equalizer, eq_taps=c.eq_taps, pilot_window=c.pilot_window, sample_rate_hz=c.sample_rate_hz,
                    code=c.fec, decoding=c.fec_decoding, interleave=c.interleave)
+        fixed_mod = None if c.adaptive else c.mod
+        if c.fec == "auto":                                     # modulation AND code from the MCS table
+            fixed_mod, phy["code"] = self.mcs.choose()
+        if c.leo:
+            L = self.leo_at(k)
+            phy["cfo"] = L["cfo"] + c.cfo                        # Doppler left after the chosen handling
+            phy["cfo_search"] = L["search"]
+            self.leo_t.append(L["t_s"])
+        else:
+            self.leo_t.append(None)
+        self.codes.append(phy["code"])
         t0 = time.perf_counter()
         if c.band:
             # the policy picks the channel; SNR = set SNR + that channel's offset; if its licensed
             # user is on, its signal is added as interference (replacing the jammer setting).
             # AUTO picks the modulation per channel from our last SNR report there (goodput policy).
-            e = self._ensure_band().step(pkt, self.n_packets, snr, self.rng, mod=None if c.adaptive else c.mod, **phy)
+            e = self._ensure_band().step(pkt, self.n_packets, snr, self.rng, mod=fixed_mod, **phy)
             t, snr = e["transfer"], e["snr_db"]
             self.channels.append(e["ch"])
             self.collided.append(e["collided"])
         else:
-            mod = self.adapter.choose() if c.adaptive else c.mod  # adaptation only knows past feedback
+            mod = fixed_mod or self.adapter.choose()              # adaptation only knows past feedback
             t = transfer_packet(pkt, self.n_packets, mod, snr, self.rng, **phy)
             self.channels.append(None)
             self.collided.append(None)
@@ -335,6 +389,7 @@ class LinkEngine:
             self._rough.setdefault(t.rough.seq, t.rough)      # first damaged copy wins, as in link.send
         outcome = "ok" if t.good is not None else ("damaged" if t.rough is not None else "lost")
         self.adapter.update(t.record)                           # feedback for the next packet
+        self.mcs.update(t.record)
         self.records.append(t.record)
         self.outcomes.append(outcome)
         self.snr_set.append(snr)
@@ -448,9 +503,13 @@ class LinkEngine:
                            "channel_bit_errors": r.channel_bit_errors, "n_channel_bits": r.n_channel_bits,
                            "process_ms": round(self.process_ms[off + j], 2),
                            "airtime_ms": round(1e3 * r.n_samples / c.sample_rate_hz, 3),
-                           "ch": self.channels[off + j], "collided": self.collided[off + j]}
+                           "ch": self.channels[off + j], "collided": self.collided[off + j],
+                           "leo_t": self.leo_t[off + j]}
                           for j, r in enumerate(recs)]
         out["band"] = self.band_view()
+        out["leo"] = self.leo_view()
+        if c.fec == "auto":
+            out["amc"] = self.mcs.summary() | {"enabled": True}
         if c.band and c.adaptive and self.bandlink is not None:
             # in band mode AUTO picks per channel, from our last SNR report on the channel chosen next
             bl = self.bandlink
@@ -478,6 +537,22 @@ class LinkEngine:
                                     "start": v.wave_start, "step": dec, "frame_start": v.frame_start}}
         return out
 
+
+    def leo_view(self) -> dict:
+        """LEO pass mode display: the whole pass (decimated) and where the next packet is."""
+        c = self.config
+        if not c.leo:
+            return {"enabled": False}
+        L = self._leo()
+        tl, step = L["tl"], max(1, len(L["tl"]["t_s"]) // 120)
+        now = self.leo_at(len(self.records))
+        return {"enabled": True, "mode": c.leo_doppler, "max_elev_deg": c.leo_max_elev,
+                "s_per_packet": c.leo_s_per_packet, "pass_s": L["pass_s"], "search_khz": L["search"] * 1e3,
+                "now": {k: round(v, 3) for k, v in now.items() if k != "search"} | {"cfo_khz": round(now["cfo"] * 1e3, 3)},
+                "track": {"t_s": np.round(tl["t_s"][::step], 1).tolist(), "snr_db": np.round(tl["snr_db"][::step], 2).tolist(),
+                          "doppler_khz": np.round(tl["doppler_hz"][::step] / 1e3, 2).tolist(),
+                          "elev_deg": np.round(tl["elev_deg"][::step], 1).tolist(),
+                          "residual_khz": np.round(L["cfo"][::step] * 1e3, 2).tolist()}}
 
     def band_view(self) -> dict:
         """Band mode display: who is on, what we sensed, which channel we used, over recent slots."""

@@ -224,13 +224,13 @@
 
     <div class="sec">
       <div class="lbl">Error correction <span class="chip" id="fecChip">OFF</span></div>
-      <div class="sel" id="fec"><button data-v="none">OFF</button><button data-v="1/2">RATE ½</button><button data-v="2/3">⅔</button><button data-v="3/4">¾</button></div>
+      <div class="sel" id="fec"><button data-v="none">OFF</button><button data-v="1/2">½</button><button data-v="2/3">⅔</button><button data-v="3/4">¾</button><button data-v="auto">AUTO</button></div>
       <div id="fecBox" class="hidden">
         <div class="lbl" style="margin-top:10px">Decoder input</div>
         <div class="sel" id="fdec"><button data-v="soft">SOFT</button><button data-v="soft_fixed">SOFT·FIXED</button><button data-v="hard">HARD</button></div>
         <label class="sw"><input type="checkbox" id="ilv"><i></i>Interleave coded bits</label>
       </div>
-      <div class="hint">Convolutional code K=7 (as in Wi-Fi) with a Viterbi decoder. Rate ½ sends 2 bits per data bit: much more robust, half the speed.</div>
+      <div class="hint">Convolutional code K=7 (as in Wi-Fi) with a Viterbi decoder. Rate ½ sends 2 bits per data bit: much more robust, half the speed. AUTO picks modulation AND code for every packet from the receiver's last SNR report.</div>
     </div>
 
     <div class="sec">
@@ -252,6 +252,20 @@
       <div id="sirRow"><div class="lbl" style="margin-top:10px">Signal ÷ interference <span class="mono" id="sirV"></span></div>
         <div class="fader"><input type="range" id="sir" min="-10" max="30" step="1"><div class="ticks"><span>-10</span><span>0</span><span>10</span><span>20</span><span>30</span></div></div></div>
       <div class="hint">Fading and multipath keep the same average SNR; fades make the instantaneous SNR swing around it.</div>
+    </div>
+
+    <div class="sec">
+      <div class="lbl">Satellite pass <span class="chip" id="leoChip">OFF</span></div>
+      <label class="sw"><input type="checkbox" id="leo"><i></i>Fly a LEO pass (550 km, 2 GHz)</label>
+      <div id="leoBox" class="hidden">
+        <div class="lbl" style="margin-top:10px">Highest elevation</div>
+        <div class="sel" id="lelev"><button data-v="90">90°</button><button data-v="60">60°</button><button data-v="30">30°</button><button data-v="15">15°</button></div>
+        <div class="lbl" style="margin-top:10px">Doppler handling</div>
+        <div class="sel" id="ldop"><button data-v="none">NONE</button><button data-v="search">SEARCH</button><button data-v="predicted">PREDICT</button><button data-v="predicted+search">PRED+S</button></div>
+        <div class="lbl" style="margin-top:10px">Pass time per packet <span class="mono" id="lspV"></span></div>
+        <div class="fader"><input type="range" id="lsp" min="0.5" max="8" step="0.5"><div class="ticks"><span>0.5</span><span>2</span><span>4</span><span>6</span><span>8</span></div></div>
+        <div class="hint">SNR now follows the link budget (the SNR slider is not used) and the frequency offset follows the Doppler left after the chosen handling. The receiver alone copes with about ±6 kHz.</div>
+      </div>
     </div>
 
     <div class="sec">
@@ -353,6 +367,12 @@
       <canvas id="cChan" height="132"></canvas>
       <div class="readout"><span><b style="color:var(--muted)">━ true</b></span><span><b style="color:var(--sig)">━ RX estimate</b></span><span>EQ <b id="rEq">off</b></span></div>
     </div>
+    <div class="panel hidden" id="leoPanel">
+      <div class="ph"><h3>Satellite pass</h3><span class="tag" id="lTag">–</span></div>
+      <canvas id="cLeo" height="150"></canvas>
+      <div class="readout"><span><b style="color:var(--sig)">━</b> SNR (dB)</span><span><b style="color:var(--warn)">┅</b> Doppler (kHz)</span><span><b style="color:var(--q)">━</b> left after handling</span></div>
+      <div class="readout"><span>ELEV <b id="lEl">–</b></span><span>RANGE <b id="lRg">–</b></span><span>DOPPLER <b id="lDp">–</b></span><span>LEFT <b id="lRs">–</b></span></div>
+    </div>
     <div class="panel hidden" id="bandPanel">
       <div class="ph"><h3>Band occupancy</h3><span class="tag" id="bTag">CH · SLOT</span></div>
       <canvas id="cBand" height="176"></canvas>
@@ -372,7 +392,7 @@
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const MODNAME = {bpsk: "BPSK", qpsk: "QPSK", qam16: "16-QAM"};
-const FECNAME = {"1/2": "½", "2/3": "⅔", "3/4": "¾"};
+const FECNAME = {"1/2": "½", "2/3": "⅔", "3/4": "¾", "auto": "AUTO"};
 const fecTag = code => code && code !== "none" ? " · FEC " + FECNAME[code] : "";
 const SYNC_THRESHOLD = 0.58, PREAMBLE_SAMPLES = 63 * 8;          // receiver constants (receiver.py, transmitter.py)
 let S = null, lastCfg = null, busy = false, lastSent = -1, lastImg = "";
@@ -413,6 +433,7 @@ const SLIDERS = {
   dop:  {key: "doppler_hz",      fmt: v => (+v === 0 ? "0 Hz (block)" : v + " Hz"), from: c => c.doppler_hz},
   dly:  {key: "delay_spread_us", fmt: v => v + " µs",               from: c => c.delay_spread_us},
   sir:  {key: "sir_db",          fmt: v => (+v).toFixed(0) + " dB",  from: c => c.sir_db},
+  lsp:  {key: "leo_s_per_packet", fmt: v => (+v).toFixed(1) + " s",  from: c => c.leo_s_per_packet},
   harm: {key: "harm_weight",     fmt: v => (+v === 0 ? "off" : (+v).toFixed(2)), from: c => c.harm_weight},
   swing:{key: "snr_swing_db",    fmt: v => (+v === 0 ? "off" : "± " + v + " dB"), from: c => c.snr_swing_db},
 };
@@ -432,6 +453,9 @@ seg("eq", v => control("update", v === "none" ? {equalizer: "none"} : {equalizer
 seg("pw", v => control("update", {pilot_window: +v}));
 $("band").onchange = e => control("update", {band: e.target.checked});
 seg("fec", v => control("update", {fec: v}));
+$("leo").onchange = e => control("update", {leo: e.target.checked});
+seg("lelev", v => control("update", {leo_max_elev: +v}));
+seg("ldop", v => control("update", {leo_doppler: v}));
 seg("fdec", v => control("update", {fec_decoding: v}));
 $("ilv").onchange = e => control("update", {interleave: e.target.checked});
 seg("bpol", v => control("update", {band_policy: v}));
@@ -464,7 +488,10 @@ function fillControls(c, prev) {
   $("sizeV").textContent = c.image_size + "×" + c.image_size;
   setSeg("fec", c.fec); setSeg("fdec", c.fec_decoding); $("ilv").checked = c.interleave;
   $("fecBox").classList.toggle("hidden", c.fec === "none");
-  $("fecChip").textContent = c.fec === "none" ? "OFF" : `RATE ${FECNAME[c.fec]} · ${c.fec_decoding.replace("_", " ").toUpperCase()}`;
+  $("fecChip").textContent = c.fec === "none" ? "OFF" : c.fec === "auto" ? "AUTO · MCS" : `RATE ${FECNAME[c.fec]} · ${c.fec_decoding.replace("_", " ").toUpperCase()}`;
+  $("leo").checked = c.leo; $("leoBox").classList.toggle("hidden", !c.leo);
+  setSeg("lelev", c.leo_max_elev); setSeg("ldop", c.leo_doppler);
+  $("leoChip").textContent = c.leo ? `${c.leo_max_elev}° · ${c.leo_doppler.toUpperCase()}` : "OFF";
   $("band").checked = c.band; $("bandBox").classList.toggle("hidden", !c.band);
   setSeg("bpol", c.band_policy); setSeg("sensing", c.sensing);
   $("bandChip").textContent = c.band ? c.band_policy.toUpperCase() : "OFF";
@@ -484,6 +511,8 @@ function fillControls(c, prev) {
     if (prev.seed !== c.seed) event(`Seed → ${c.seed}`, "cfg");
     if (prev.fec !== c.fec || prev.fec_decoding !== c.fec_decoding || prev.interleave !== c.interleave)
       event(`FEC → ${c.fec === "none" ? "off" : "rate " + c.fec + " · " + c.fec_decoding + " decoding · interleaver " + (c.interleave ? "on" : "off")}`, "cfg");
+    if (prev.leo !== c.leo || (c.leo && (prev.leo_max_elev !== c.leo_max_elev || prev.leo_doppler !== c.leo_doppler)))
+      event(`Satellite pass ${c.leo ? "ON · peak " + c.leo_max_elev + "° · Doppler " + c.leo_doppler : "OFF"}`, "cfg");
     if (prev.band !== c.band) event(`Band mode ${c.band ? "ON (" + c.band_policy + ")" : "OFF"}`, "cfg");
     else if (c.band && (prev.band_policy !== c.band_policy || prev.harm_weight !== c.harm_weight))
       event(`Channel selection → ${c.band_policy}${c.harm_weight ? " · harm weight " + c.harm_weight : ""} (learning restarts)`, "cfg");
@@ -696,6 +725,43 @@ function drawBand(B) {
   g.fillText(`← ${cols} slots`, x0, h - 4); g.textAlign = "right"; g.fillText("now", x1, h - 4);
   g.strokeStyle = css("--line2"); g.strokeRect(x0 + .5, y0 + .5, x1 - x0, y1 - y0);
 }
+function drawLeo(L, s) {
+  const [g, w, h] = ctx2d($("cLeo")), x0 = 30, x1 = w - 34, y0 = 8, y1 = h - 18, T = L.track;
+  const tmax = L.pass_s, X = t => x0 + t / tmax * (x1 - x0);
+  const Ys = v => y0 + (14 - Math.max(-2, Math.min(14, v))) / 16 * (y1 - y0);          // SNR -2..14 dB
+  const Yd = v => y0 + (50 - Math.max(-50, Math.min(50, v))) / 100 * (y1 - y0);         // Doppler -50..50 kHz
+  grid(g, x0, y0, x1, y1, ticks(0, tmax / 60, 4).map(m => m * 60), [0, 4, 8, 12], X, Ys, v => (v / 60).toFixed(0) + "m", v => v);
+  g.fillStyle = css("--dim"); g.textAlign = "left";
+  for (const v of [-40, 0, 40]) g.fillText(v, x1 + 4, Yd(v) + 3);
+  g.fillStyle = "rgba(169,139,240,.10)"; g.fillRect(x0, Yd(6), x1 - x0, Yd(-6) - Yd(6));     // receiver's own range
+  const line = (arr, Y, col, dash, lw) => { g.strokeStyle = col; g.lineWidth = lw || 1.3; g.setLineDash(dash || []); g.beginPath();
+    arr.forEach((v, i) => i ? g.lineTo(X(T.t_s[i]), Y(v)) : g.moveTo(X(T.t_s[i]), Y(v))); g.stroke(); g.setLineDash([]); };
+  line(T.doppler_khz, Yd, "rgba(240,178,60,.8)", [4, 3]);
+  line(T.residual_khz, Yd, css("--q"), [], 1.2);
+  line(T.snr_db, Ys, css("--sig"), [], 1.8);
+  // packets already sent in this run: green = ok, red = lost, at their pass time on the SNR curve
+  for (const r of s.history) if (r.leo_t !== null && r.leo_t !== undefined) {
+    g.fillStyle = r.outcome === "ok" ? css("--ok") : r.outcome === "damaged" ? css("--warn") : css("--err");
+    g.fillRect(X(r.leo_t) - 1.5, y1 - 7, 3, 5);
+  }
+  const n = L.now;
+  g.strokeStyle = css("--ink"); g.beginPath(); g.moveTo(X(n.t_s) + .5, y0); g.lineTo(X(n.t_s) + .5, y1); g.stroke();
+  g.fillStyle = css("--ink"); g.textAlign = n.t_s > tmax / 2 ? "right" : "left";
+  g.fillText("next packet", X(n.t_s) + (n.t_s > tmax / 2 ? -4 : 4), y0 + 10);
+}
+function leoPanel(s) {
+  const L = s.leo;
+  $("leoPanel").classList.toggle("hidden", !L.enabled);
+  if (!L.enabled) return;
+  drawLeo(L, s);
+  const n = L.now;
+  $("lEl").textContent = n.elev_deg.toFixed(0) + "°";
+  $("lRg").textContent = n.range_km.toFixed(0) + " km";
+  $("lDp").textContent = (n.doppler_khz >= 0 ? "+" : "") + n.doppler_khz.toFixed(1) + " kHz";
+  $("lRs").textContent = (n.cfo_khz >= 0 ? "+" : "") + n.cfo_khz.toFixed(1) + " kHz";
+  $("lRs").style.color = Math.abs(n.cfo_khz) <= 6 || L.search_khz >= Math.abs(n.cfo_khz) ? css("--ok") : css("--err");
+  $("lTag").textContent = `${(n.t_s / 60).toFixed(1)}/${(L.pass_s / 60).toFixed(1)} MIN`;
+}
 function bandPanel(s) {
   const B = s.band, on = s.config.band || (B && B.started);
   $("bandPanel").classList.toggle("hidden", !on);
@@ -739,7 +805,8 @@ function telemetry(s) {
   setV("vTp", kbps(R.throughput_bps), kbps(Q.throughput_bps));
   setV("vLat", nil(R.latency_frame_ms) ? "–" : R.latency_frame_ms.toFixed(2) + " ms", "airtime");
   setV("vOh", pct(R.overhead_fraction));
-  if (c.adaptive) setV("vMod", MODNAME[s.amc.next], `AUTO · ${s.amc.policy}` + (s.amc.policy === "olla" ? ` · ${s.amc.offset_db >= 0 ? "+" : ""}${s.amc.offset_db.toFixed(1)} dB` : ""), "sig");
+  if (c.fec === "auto") setV("vMod", MODNAME[s.amc.next] + (s.amc.next_code !== "none" ? " " + FECNAME[s.amc.next_code] : ""), "AUTO · modulation + coding", "sig");
+  else if (c.adaptive) setV("vMod", MODNAME[s.amc.next], `AUTO · ${s.amc.policy}` + (s.amc.policy === "olla" ? ` · ${s.amc.offset_db >= 0 ? "+" : ""}${s.amc.offset_db.toFixed(1)} dB` : ""), "sig");
   else setV("vMod", MODNAME[c.mod], c.fec !== "none" ? "FEC " + FECNAME[c.fec] + " · " + c.fec_decoding : R.mod === "mixed" ? "run: mixed" : undefined, "sig");
   setV("vCh", chanShort(c), "Δf " + (c.cfo * c.sample_rate_hz / 1000).toFixed(2) + " kHz");
   $("chChip").textContent = chanShort(c);
@@ -751,10 +818,11 @@ function pipeline(s) {
   const set = (id, t, cls) => { $(id).textContent = t; $(id).className = "v" + (cls ? " " + cls : ""); };
   set("pPayload", c.source === "text" ? `TEXT · ${s.message_bytes} B` : `IMAGE · ${c.image_size}×${c.image_size}${c.gray ? " gray" : ""}`);
   set("pPack", `${s.n_packets} × ≤${c.max_payload} B + CRC-16`);
-  set("pMod", (c.adaptive ? `AUTO → ${MODNAME[s.amc.next]}` : MODNAME[c.mod]) + fecTag(c.fec));
+  set("pMod", c.fec === "auto" ? `MCS → ${MODNAME[s.amc.next]}${fecTag(s.amc.next_code)}` : (c.adaptive ? `AUTO → ${MODNAME[s.amc.next]}` : MODNAME[c.mod]) + fecTag(c.fec));
   const lastCh = s.history.length ? s.history[s.history.length - 1].ch : null;
   const lastSnr = s.history.length ? s.history[s.history.length - 1].snr_set : s.snr_now_db;
-  set("pChan", `${c.band && lastCh !== null ? "CH" + lastCh + " · " : ""}${s.channel_desc} · ${(c.band && lastCh !== null ? lastSnr : s.snr_now_db).toFixed(1)} dB${c.snr_swing_db ? " (swing ±" + c.snr_swing_db + ")" : ""} · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
+  if (s.leo && s.leo.enabled) set("pChan", `LEO ${s.leo.now.elev_deg.toFixed(0)}° · ${s.leo.now.snr_db.toFixed(1)} dB · Δf ${s.leo.now.cfo_khz.toFixed(1)} kHz left`);
+  else set("pChan", `${c.band && lastCh !== null ? "CH" + lastCh + " · " : ""}${s.channel_desc} · ${(c.band && lastCh !== null ? lastSnr : s.snr_now_db).toFixed(1)} dB${c.snr_swing_db ? " (swing ±" + c.snr_swing_db + ")" : ""} · Δf ${(c.cfo * c.sample_rate_hz / 1000).toFixed(2)} kHz`);
   if (!L) { for (const id of ["pSync", "pEq", "pDem", "pCrc"]) set(id, "–"); }
   else {
     const det = L.sync_metric >= SYNC_THRESHOLD;
@@ -834,8 +902,8 @@ function render() {
   $("goLed").className = "led" + (s.running ? " on" : "");
   $("goTxt").textContent = s.running ? "Pause" : s.done ? "Rerun" : "Run";
   $("cMod").textContent = MODNAME[L ? L.mod : c.mod] + (c.adaptive ? " · AUTO" : "");
-  $("amcNext").textContent = c.adaptive ? "next: " + MODNAME[s.amc.next] : "";
-  logPackets(s); telemetry(s); pipeline(s); payload(s); table(s); bandPanel(s);
+  $("amcNext").textContent = c.adaptive && c.fec !== "auto" ? "next: " + MODNAME[s.amc.next] : "";
+  logPackets(s); telemetry(s); pipeline(s); payload(s); table(s); bandPanel(s); leoPanel(s);
   if (s.sent !== lastSent) {
     if (s.sent < lastSent || s.sent === 0) { persist = []; prevPsd = curPsd = null; }
     else if (L) { persist.push(L.constellation); persist = persist.slice(-4); prevPsd = curPsd; curPsd = L.psd.db; }
@@ -855,7 +923,7 @@ async function poll() {
   catch (e) { say("lost contact with the Python server", true); }
   finally { busy = false; }
 }
-addEventListener("resize", () => { if (S) { drawSignals(); bandPanel(S); } });
+addEventListener("resize", () => { if (S) { drawSignals(); bandPanel(S); leoPanel(S); } });
 event("Testbed online", "cfg");
 poll(); setInterval(poll, 150);
 </script>
