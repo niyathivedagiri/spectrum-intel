@@ -239,6 +239,37 @@ In the dashboard: Error correction → RATE ½ / ⅔ / ¾, decoder SOFT / SOFT·
   uncoded 16-QAM is best. The best scheme moves BPSK ½ → QPSK ½ … ¾ → 16-QAM ½ … ¾ → uncoded as SNR rises.
   Choosing the code automatically (adaptive modulation *and* coding, as in LTE) is the natural extension of Phase 6.
 
+**Phase 9 (done): open-set recognition ("unknown signal").** The CNN was trained on 6 classes, so it must
+call everything one of them, even signal types it has never seen. `openset.py` adds a reject option on top
+of the unchanged model: five scores of "how familiar is this?" (softmax confidence, max logit, energy,
+Mahalanobis distance in the CNN's feature space, k-nearest-neighbour distance). All are fitted and
+thresholded on **known signals only** (threshold = keep 95% of known signals); six new signal types are
+used only for testing: *near* ones that resemble known classes (8-PSK, 64-QAM, a different OFDM) and *far*
+ones (GFSK, AM, FM). An exploratory run came first; the reported numbers come from fresh seeds.
+
+| Measured (`exp_openset.py`, 300 per class / per type, SNR −10…20 dB) | Result |
+|---|---|
+| AUROC known vs unknown (SNR ≥ 0 dB; 0.5 = chance): softmax / max logit / energy / Mahalanobis / kNN | 0.66 / 0.58 / 0.58 / **0.76** / **0.78** |
+| Unknowns wrongly accepted (SNR ≥ 0 dB), softmax confidence | 98% (the CNN is confident about signals it never saw) |
+| Same, Mahalanobis: GFSK / AM / FM | **0% / 0% / 0%** |
+| Same, Mahalanobis: 8-PSK / 64-QAM / other OFDM | 100% (called QPSK) / 100% (called 16-QAM) / 48% |
+| Far unknowns rejected vs SNR (Mahalanobis) | 23% at −10 dB, 61% at −6, 92% at −2, 100% from 0 dB |
+| Known signals kept (target 95%) and their accuracy at SNR ≥ 0 dB | 94.3% kept; 98–100% of those classified correctly |
+| Earlier CNN layers / classic cumulant statistics / both combined | AUROC 0.60–0.73 / 0.79 / 0.83; 8-PSK still 61–100% accepted |
+
+- **Softmax confidence does not mean "I know this".** A network trained only to choose between 6 classes is
+  just as sure about FM radio as about QPSK. Measuring distance in its feature space works far better.
+- **A detector can only reject what the features can see.** 8-PSK and 64-QAM land exactly on QPSK and 16-QAM:
+  the CNN never needed features that separate them, so no post-hoc score can. Earlier layers and textbook
+  higher-order statistics did not fix it either (they help a little but are noisy on short, pulse-shaped
+  windows). Fixing this needs training-time changes (e.g. outlier exposure, or a hierarchy such as "PSK family").
+- **Hypothesis that failed:** I expected low-SNR unknowns to be called "noise". Instead they are accepted as
+  noisy QPSK/16-QAM: low-SNR known examples spread widely in feature space and swallow them. The 5% of known
+  signals that get rejected are mostly tones/chirps ("interference", 68 of 102) and BPSK, at all SNRs.
+- **Limitations.** Single thresholds for all SNRs (an SNR-aware threshold would help); unknown types are
+  synthetic; only the baseline CNN is evaluated (not the Doppler-trained one); no retraining was done on purpose,
+  so the original validated classifier and its results are unchanged.
+
 ```bash
 python scripts/dashboard.py                                                    # opens http://127.0.0.1:8765
 python scripts/dashboard.py --source image --snr 3                            # the sample photo
@@ -248,6 +279,7 @@ python scripts/calibrate_link_table.py                                         #
 python scripts/exp_adaptation.py                                               # adaptive vs fixed modulation (~3 min)
 python scripts/exp_channel_selection.py                                        # which channel to use (~4.5 min)
 python scripts/exp_fec.py                                                      # error correction (~4.5 min, 2 cores)
+python scripts/exp_openset.py                                                  # unknown-signal detection (~30 s)
 python scripts/exp_link_metrics.py                                             # scorecard sweep (~1.5 min)
 python scripts/demo_image_link.py --snr 2                                      # original vs strict vs tolerant vs PNG
 python scripts/exp_image_link.py                                               # PSNR/SSIM vs SNR sweep (~3 min)
@@ -283,14 +315,16 @@ The original validated numbers are frozen in `results/validated/metrics_v1.json`
 spectrum_intel/   dsp, signals, dataset, spectrum, detector, classifier, occupancy, leo, plots
                   payload, coding, packet, modulation, transmitter, channel, receiver, link,
                   metrics, experiments, engine, dashboard (+ web/dashboard.html), adaptation (+ link_table.json), selection, fec   (communication link)
+                  openset   (unknown-signal detection on top of the classifier)
 scripts/          train_classifier, evaluate_detection, run_spectrum_demo, run_leo_experiment,
                   preview_signals, run_all, demo_text_link, exp_link_ber, check_regression,
                   demo_image_link, exp_image_link, exp_link_metrics,
-                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation, exp_channel_selection, exp_fec
-models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each)
+                  dashboard, exp_realtime, exp_channel, calibrate_link_table, exp_adaptation, exp_channel_selection, exp_fec, exp_openset
+models/           cnn_baseline.pt, cnn_doppler.pt  (trained weights, 455 KB each);
+                  openset_baseline.npz (open-set statistics, recreated by exp_openset.py)
 docs/             dashboard screenshot
 results/          figures + metrics.json (validated), validated/ (frozen copy), experiments/ (new runs)
-tests/            195 automated checks
+tests/            206 automated checks
 ```
 
 ## Setup and run (macOS)
@@ -299,7 +333,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m pytest                    # 195 checks
+python -m pytest                    # 206 checks
 python scripts/run_all.py           # every experiment with the saved models (~3 min)
 python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster on Apple GPU)
 ```
@@ -307,6 +341,6 @@ python scripts/run_all.py --retrain # retrain both CNNs too (~20 min CPU, faster
 ## Limitations and next steps
 Simulated signals only; channel effects limited to AWGN, phase, timing and Doppler;
 fixed 8-channel grid; simplified orbit (directly overhead, no Earth rotation).
-Next: real captures with an RTL-SDR or the RadioML 2018 dataset, multipath fading,
-open-set "unknown signal" detection, spectrogram object detection for signals of any
-width, and SGP4 orbits with real satellite elements.
+Next: real captures with an RTL-SDR or the RadioML 2018 dataset, spectrogram object
+detection for signals of any width, and SGP4 orbits with real satellite elements.
+(Multipath fading and open-set "unknown signal" detection were added in Phases 5 and 9.)
