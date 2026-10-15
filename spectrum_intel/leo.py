@@ -79,3 +79,37 @@ def link_snr_db(distance_m, carrier_hz: float = 2e9, eirp_dbm: float = 23.0,
     rx = eirp_dbm + rx_gain_dbi - fspl_db(distance_m, carrier_hz)
     noise = -174 + 10 * np.log10(bandwidth_hz) + noise_figure_db
     return rx - noise
+
+
+def general_pass(altitude_m: float = 550e3, max_elevation_deg: float = 90.0, min_elevation_deg: float = 10.0,
+                 dt_s: float = 1.0) -> Pass:
+    """A pass whose highest elevation is `max_elevation_deg` (90 = straight overhead).
+
+    The ground station sits a cross-track angle beta away from the orbit plane; beta is found so
+    that the pass peaks at the requested elevation. Earth's rotation is ignored, as in overhead_pass.
+    """
+    r = EARTH_RADIUS + altitude_m
+    omega = orbital_speed(altitude_m) / r
+
+    def geometry(theta, beta):
+        sat = r * np.stack([np.sin(theta), np.zeros_like(theta), np.cos(theta)])
+        g = EARTH_RADIUS * np.array([0.0, np.sin(beta), np.cos(beta)])[:, None]
+        d = sat - g
+        rng_m = np.linalg.norm(d, axis=0)
+        elev = np.degrees(np.arcsin(np.sum(d * (g / EARTH_RADIUS), axis=0) / rng_m))
+        vel = r * omega * np.stack([np.cos(theta), np.zeros_like(theta), -np.sin(theta)])
+        return elev, rng_m, np.sum(d * vel, axis=0) / rng_m
+
+    lo, hi = 0.0, 0.5                                          # beta (rad): 0 -> overhead
+    for _ in range(80):                                        # bisection on the peak elevation
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if geometry(np.array([0.0]), mid)[0][0] > max_elevation_deg else (lo, mid)
+    beta = (lo + hi) / 2
+    if geometry(np.array([0.0]), beta)[0][0] < min_elevation_deg:
+        raise ValueError("max elevation below the minimum elevation: no pass")
+    theta = np.linspace(-0.6, 0.6, 40001)
+    elev, _, _ = geometry(theta, beta)
+    vis = theta[elev >= min_elevation_deg]
+    t = np.arange(vis.min() / omega, vis.max() / omega, dt_s)
+    elev, rng_m, rr = geometry(omega * t, beta)
+    return Pass(t - t[0], elev, rng_m, rr)
